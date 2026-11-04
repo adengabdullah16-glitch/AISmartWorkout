@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0B0D0C">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="SmartFit AI – asisten latihan dengan deteksi gerakan langsung di perangkat.">
+  <title>SmartFit AI</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <noscript><p class="noscript">SmartFit AI membutuhkan JavaScript.</p></noscript>
+
+  <!-- ============================ DASHBOARD ============================ -->
+  <main id="view-home" class="view is-active" aria-labelledby="home-title">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <h1 id="home-title">SmartFit <span>AI</span></h1>
+      </div>
+      <span class="chip chip-muted" id="demo-chip" hidden>MODE DEMO</span>
+    </header>
+
+    <section class="hero">
+      <p class="eyebrow" id="greeting">Selamat datang</p>
+      <h2 class="hero-title">Latihan cerdas,<br>langsung dari kamera.</h2>
+    </section>
+
+    <section class="stats" aria-label="Ringkasan">
+      <article class="card stat">
+        <span class="stat-label">Total workout</span>
+        <strong class="stat-value" id="stat-workouts">0</strong>
+      </article>
+      <article class="card stat">
+        <span class="stat-label">Total repetisi</span>
+        <strong class="stat-value" id="stat-reps">0</strong>
+      </article>
+      <article class="card stat">
+        <span class="stat-label">Durasi latihan</span>
+        <strong class="stat-value" id="stat-duration">0d</strong>
+      </article>
+      <article class="card stat">
+        <span class="stat-label">Terakhir</span>
+        <strong class="stat-value stat-small" id="stat-last">—</strong>
+      </article>
+    </section>
+
+    <section class="card chart-card">
+      <div class="card-head">
+        <h3>Repetisi 7 hari</h3>
+      </div>
+      <div id="chart" class="chart"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h3>Pilih latihan</h3>
+      </div>
+      <div class="exercise-list" id="exercise-list"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h3>Riwayat</h3>
+        <button class="link-btn" id="btn-clear-history" hidden>Hapus semua</button>
+      </div>
+      <ul class="history" id="history-list"></ul>
+    </section>
+
+    <footer class="foot">
+      Video diproses di perangkat Anda dan tidak diunggah. SmartFit AI adalah alat bantu latihan,
+      bukan alat medis: aplikasi ini tidak mendeteksi cedera dan tidak menjamin keamanan gerakan.
+    </footer>
+  </main>
+
+  <!-- ============================ SETUP / PANDUAN ============================ -->
+  <main id="view-setup" class="view" aria-labelledby="setup-title">
+    <header class="topbar">
+      <button class="icon-btn" data-action="home" aria-label="Kembali">
+        <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <h1 id="setup-title" class="topbar-title">Squat</h1>
+      <span class="icon-btn-spacer"></span>
+    </header>
+
+    <section class="card guide">
+      <div class="guide-art" aria-hidden="true">
+        <svg viewBox="0 0 320 170">
+          <line x1="10" y1="150" x2="310" y2="150" class="g-floor"/>
+          <!-- HP -->
+          <rect x="34" y="78" width="24" height="44" rx="5" class="g-phone"/>
+          <circle cx="46" cy="86" r="2.5" class="g-lens"/>
+          <path d="M40 122 l-8 28 M52 122 l8 28" class="g-stand"/>
+          <!-- garis pandang -->
+          <path d="M58 92 L250 20 M58 92 L250 152" class="g-sight"/>
+          <!-- figur samping squat -->
+          <circle cx="226" cy="54" r="10" class="g-head"/>
+          <path d="M222 66 L206 100 L232 112 L222 148 M206 100 L232 112" class="g-body"/>
+          <path d="M221 74 L246 88" class="g-body"/>
+          <path d="M222 148 L238 148" class="g-body"/>
+          <!-- jarak -->
+          <path d="M58 162 L210 162" class="g-dim"/>
+          <text x="134" y="158" class="g-txt">2–3 m</text>
+        </svg>
+      </div>
+      <h2 class="guide-title" id="guide-title">Posisi kamera</h2>
+      <ol class="guide-steps" id="guide-steps"></ol>
+      <p class="guide-note" id="guide-note"></p>
+    </section>
+
+    <section class="card setting-row">
+      <div>
+        <span class="setting-label">Target repetisi</span>
+      </div>
+      <div class="stepper" role="group" aria-label="Target repetisi">
+        <button class="step-btn" id="target-minus" aria-label="Kurangi">−</button>
+        <output id="target-value">10</output>
+        <button class="step-btn" id="target-plus" aria-label="Tambah">+</button>
+      </div>
+    </section>
+
+    <section class="card setting-row">
+      <label for="opt-sound" class="setting-label">Suara pelatih<small>Menyebut hitungan & koreksi</small></label>
+      <input type="checkbox" id="opt-sound" class="switch" checked>
+    </section>
+
+    <details class="card advanced">
+      <summary>Pengaturan lanjutan</summary>
+      <div class="setting-row inner">
+        <label for="opt-cpu" class="setting-label">Mode kompatibilitas (CPU)<small>Aktifkan bila deteksi macet/kosong, misalnya di sebagian iPhone/iPad.</small></label>
+        <input type="checkbox" id="opt-cpu" class="switch">
+      </div>
+      <button class="link-btn" id="btn-demo">Coba mode demo (tanpa kamera)</button>
+    </details>
+
+    <div class="cta-bar">
+      <button class="btn btn-primary btn-xl" id="btn-start">Mulai latihan</button>
+    </div>
+  </main>
+
+  <!-- ============================ WORKOUT LIVE ============================ -->
+  <main id="view-workout" class="view view-workout" aria-label="Sesi latihan">
+    <div class="stage" id="stage">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+
+      <div class="hud-top">
+        <button class="icon-btn glass" id="btn-close" aria-label="Akhiri">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+        <div class="hud-title">
+          <span id="hud-exercise">Squat</span>
+          <span class="hud-timer" id="hud-timer">00:00</span>
+        </div>
+        <div class="hud-actions">
+          <button class="icon-btn glass" id="btn-sound" aria-label="Suara" aria-pressed="true">
+            <svg viewBox="0 0 24 24" class="ico-on"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11"/></svg>
+            <svg viewBox="0 0 24 24" class="ico-off"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
+          </button>
+          <button class="icon-btn glass" id="btn-flip" aria-label="Ganti kamera">
+            <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9.5 13.5a2.8 2.8 0 004.9 1.5M14.5 12.5A2.8 2.8 0 009.6 11"/><path d="M14.6 15.6v-1.2h1.2M9.4 10.4v1.2H8.2"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="hud-status">
+        <span class="pill" id="pill-track"><i class="dot"></i><span id="track-text">Mencari tubuh…</span></span>
+        <span class="pill pill-mini" id="pill-fps">— FPS</span>
+        <span class="pill pill-mini" id="pill-quality">Kualitas —</span>
+      </div>
+
+      <div class="hud-counter" aria-live="polite">
+        <strong id="rep-count">0</strong><span id="rep-target">/10</span>
+        <em id="rep-phase">Bersiap</em>
+      </div>
+
+      <div class="depth" aria-hidden="true">
+        <div class="depth-track"><div class="depth-fill" id="depth-fill"></div><div class="depth-mark"></div></div>
+        <span class="depth-angle" id="depth-angle">—</span>
+      </div>
+
+      <div class="coach" id="coach" data-tone="info" aria-live="polite">
+        <span id="coach-text">Berdiri tegak menyamping untuk memulai.</span>
+      </div>
+
+      <div class="overlay-panel" id="loading" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="loading-text">Menyiapkan…</p>
+      </div>
+
+      <div class="overlay-panel" id="error-panel" hidden>
+        <div class="error-ico" aria-hidden="true">!</div>
+        <h2>Tidak bisa memulai</h2>
+        <p id="error-text"></p>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btn-retry">Coba lagi</button>
+          <button class="btn btn-ghost" data-action="home">Kembali</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="progress" aria-hidden="true"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="btn-row">
+        <button class="btn btn-ghost btn-lg" id="btn-pause">Jeda</button>
+        <button class="btn btn-primary btn-lg" id="btn-finish">Selesai</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============================ RINGKASAN ============================ -->
+  <main id="view-summary" class="view" aria-labelledby="summary-title">
+    <header class="topbar">
+      <span class="icon-btn-spacer"></span>
+      <h1 id="summary-title" class="topbar-title">Ringkasan</h1>
+      <span class="icon-btn-spacer"></span>
+    </header>
+    <section class="summary-hero">
+      <p class="eyebrow" id="sum-exercise">Squat</p>
+      <div class="summary-reps"><strong id="sum-reps">0</strong><span>repetisi</span></div>
+      <p class="summary-sub" id="sum-sub"></p>
+    </section>
+    <section class="stats">
+      <article class="card stat"><span class="stat-label">Durasi</span><strong class="stat-value" id="sum-duration">0d</strong></article>
+      <article class="card stat"><span class="stat-label">Teknik baik</span><strong class="stat-value" id="sum-good">0</strong></article>
+      <article class="card stat"><span class="stat-label">Terlalu dangkal</span><strong class="stat-value" id="sum-shallow">0</strong></article>
+      <article class="card stat"><span class="stat-label">Target</span><strong class="stat-value" id="sum-target">0</strong></article>
+    </section>
+    <section class="card notes">
+      <h3>Catatan teknik</h3>
+      <ul id="sum-notes"></ul>
+    </section>
+    <div class="cta-bar">
+      <div class="btn-row">
+        <button class="btn btn-ghost btn-lg" id="btn-again">Ulangi</button>
+        <button class="btn btn-primary btn-lg" data-action="home">Ke dashboard</button>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

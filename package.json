@@ -1,0 +1,10 @@
+{
+  "name": "smartfit-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SmartFit AI – Personal Workout Assistant (web, MediaPipe Pose)",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}
