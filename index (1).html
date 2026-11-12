@@ -1,0 +1,2213 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stock SNA DSS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+/* Layout: bar komando → [radar korelasi | target lock] → papan sinyal → kinerja → log misi → kalibrasi.
+   Tampilan sengaja satu tema (gelap): HUD hologram cyan dengan aksen emas. */
+:root {
+  color-scheme: dark;
+  --bg: #04080e;
+  --bg-2: #071320;
+  --panel: #07121c;
+  --panel-2: #0b1a27;
+  --line: rgba(63, 224, 255, .32);
+  --line-soft: rgba(63, 224, 255, .12);
+  --cyan: #3fe0ff;
+  --cyan-dim: #1d8fb0;
+  --gold: #e8c170;
+  --gold-dim: #9c7b3a;
+  --text: #d6f4ff;
+  --muted: #6f93a6;
+  --buy: #ffb627;   --buy-a: rgba(255, 182, 39, .14);
+  --mom: #2ee6a0;   --mom-a: rgba(46, 230, 160, .12);
+  --div: #b07cff;   --div-a: rgba(176, 124, 255, .14);
+  --avoid: #ff4d6a; --avoid-a: rgba(255, 77, 106, .13);
+  --neu: #7d909c;   --neu-a: rgba(125, 144, 156, .14);
+  --font-display: 'Chakra Petch', 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --chamfer: 14px;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* atribut hidden harus menang atas display:grid/flex komponen */
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: var(--bg); }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.nc { text-transform: none !important; }
+.gold { color: var(--gold); }
+.muted { color: var(--muted); }
+.pos { color: var(--mom); }
+.neg { color: var(--avoid); }
+.z-buy { color: var(--buy); font-weight: 600; }
+.z-div { color: var(--div); font-weight: 600; }
+
+/* ---------- LATAR HOLOGRAM ---------- */
+.fx { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+.fx-glow { background:
+  radial-gradient(60% 50% at 35% 30%, rgba(63, 224, 255, .10), transparent 70%),
+  radial-gradient(40% 40% at 85% 85%, rgba(232, 193, 112, .06), transparent 70%); }
+.fx-grid {
+  background-image:
+    linear-gradient(var(--line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+  background-size: 44px 44px;
+  opacity: .35;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 35%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse at 50% 35%, #000 20%, transparent 75%);
+}
+.fx-scan { background: repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px); }
+.fx-beam { height: 160px; top: -160px; bottom: auto;
+  background: linear-gradient(180deg, transparent, rgba(63, 224, 255, .06) 50%, transparent);
+  animation: beam 9s linear infinite; }
+@keyframes beam { to { transform: translateY(calc(100vh + 160px)); } }
+
+/* ---------- BOOT ---------- */
+.boot { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: radial-gradient(circle at 50% 45%, #0a1c2b, var(--bg) 70%); cursor: pointer;
+  padding: max(16px, env(safe-area-inset-left, 0px)); transition: opacity .45s ease; }
+.boot.out { opacity: 0; pointer-events: none; }
+.boot-inner { width: min(440px, 100%); display: grid; gap: 14px; justify-items: center; text-align: center; }
+.boot-core { width: 132px; height: 132px; }
+.boot-core .r1 { transform-origin: 66px 66px; animation: spin 2.4s linear infinite; }
+.boot-core .r2 { transform-origin: 66px 66px; animation: spin 3.6s linear infinite reverse; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.boot-title { font-size: 24px; font-weight: 700; letter-spacing: .18em; text-shadow: 0 0 18px rgba(63, 224, 255, .55); }
+.boot-title span { color: var(--gold); }
+.boot-log { width: 100%; min-height: 128px; font-family: var(--font-mono); font-size: 12px; text-align: left; color: var(--muted); }
+.boot-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: type .25s steps(18) both; }
+.boot-log b { color: var(--cyan); font-weight: 600; }
+.boot-log b.warn { color: var(--avoid); }
+@keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.boot-bar { width: 100%; height: 3px; background: var(--line-soft); overflow: hidden; }
+.boot-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--gold)); box-shadow: 0 0 10px var(--cyan); transition: width .25s ease; }
+.boot-skip { font-size: 11px; letter-spacing: .2em; color: var(--muted); text-transform: uppercase; }
+
+/* ---------- LOGIN ---------- */
+.login { cursor: default; z-index: 110; }
+.login-sub { font-size: 11px; letter-spacing: .26em; color: var(--gold); text-transform: uppercase; }
+.login-step { width: 100%; display: grid; gap: 10px; text-align: left; }
+.hud-input { width: 100%; height: 44px; padding: 0 12px; background: rgba(7, 18, 28, .9); border: 1px solid var(--line); color: var(--text); font-size: 16px; border-radius: 0; }
+.hud-input:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan), 0 0 16px rgba(63, 224, 255, .3); }
+.hud-input.mono { letter-spacing: .4em; font-size: 20px; text-align: center; }
+.login .btn-hud { height: 42px; width: 100%; }
+.login-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.login-hint { font-size: 11.5px; color: var(--muted); }
+.login-msg { min-height: 1.4em; font-size: 12.5px; color: var(--muted); text-align: center; }
+.login-msg.err { color: #ffc4cd; }
+.login-msg.ok { color: var(--mom); }
+button.pill { cursor: pointer; color: inherit; }
+button.pill:hover { border-color: var(--cyan); }
+.tg-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.tg-row .label { margin-right: 4px; }
+#tgResult { font-size: 12px; color: var(--muted); }
+#tgResult.ok { color: var(--mom); } #tgResult.err { color: #ffc4cd; }
+.user-pill { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 560px) { .user-pill { display: none !important; } }
+
+/* ---------- BAR KOMANDO ---------- */
+.cmdbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50; background: rgba(4, 8, 14, .88); border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.cmdbar-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.brand { display: flex; align-items: center; gap: 10px; margin-right: auto; min-width: 0; }
+.brand svg { width: 34px; height: 34px; flex: none; filter: drop-shadow(0 0 6px rgba(63, 224, 255, .6)); }
+.brand-title { font-size: 18px; font-weight: 700; letter-spacing: .14em; line-height: 1.1; white-space: nowrap; }
+.brand-title span { color: var(--gold); }
+.brand-sub { font-size: 10.5px; letter-spacing: .22em; color: var(--muted); text-transform: uppercase; white-space: nowrap; }
+.status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border: 1px solid var(--line); font-size: 11.5px; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; background: rgba(7, 18, 28, .8); white-space: nowrap;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px); }
+.pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--neu); flex: none; }
+.pill.ok { border-color: rgba(46, 230, 160, .5); } .pill.ok i { background: var(--mom); box-shadow: 0 0 8px var(--mom); animation: blink 1.6s infinite; }
+.pill.bad { border-color: rgba(255, 77, 106, .6); color: #ffc4cd; } .pill.bad i { background: var(--avoid); box-shadow: 0 0 8px var(--avoid); animation: blink .8s infinite; }
+.pill.sim { border-color: rgba(232, 193, 112, .6); color: var(--gold); } .pill.sim i { background: var(--gold); }
+.pill.dim i { background: var(--neu); }
+@keyframes blink { 50% { opacity: .35; } }
+.clock { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--font-mono); font-size: 13px; }
+.clock small { font-family: var(--font-display); font-size: 10px; letter-spacing: .18em; color: var(--muted); }
+.toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; letter-spacing: .14em; color: var(--muted); cursor: pointer; user-select: none; }
+.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.toggle span { width: 30px; height: 14px; border: 1px solid var(--line); position: relative; transition: border-color .2s; }
+.toggle span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; background: var(--muted); transition: transform .2s, background .2s; }
+.toggle input:checked + span { border-color: var(--cyan); }
+.toggle input:checked + span::after { transform: translateX(16px); background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+.toggle input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: 2px; }
+.btn-hud { height: 30px; padding: 0 16px; border: 1px solid var(--cyan); background: rgba(63, 224, 255, .1); color: var(--cyan); font-weight: 700;
+  letter-spacing: .16em; font-size: 12px; cursor: pointer; text-transform: uppercase;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); transition: background .2s, box-shadow .2s; }
+.btn-hud:hover { background: rgba(63, 224, 255, .2); box-shadow: inset 0 0 12px rgba(63, 224, 255, .4); }
+.btn-hud:disabled { opacity: .55; cursor: progress; }
+.btn-mini { border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 10.5px; letter-spacing: .16em; padding: 3px 9px; cursor: pointer; text-transform: uppercase; }
+.btn-mini:hover { color: var(--cyan); border-color: var(--cyan); }
+
+/* ---------- KERANGKA ---------- */
+main { position: relative; z-index: 1; display: grid; gap: 16px; padding-block: 16px 28px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); max-width: 1500px; margin: 0 auto; }
+.grid-top { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .grid-top { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { position: relative; min-width: 0; padding: 1px; background: linear-gradient(160deg, var(--line), rgba(63, 224, 255, .08) 45%, rgba(232, 193, 112, .28));
+  clip-path: polygon(var(--chamfer) 0, 100% 0, 100% calc(100% - var(--chamfer)), calc(100% - var(--chamfer)) 100%, 0 100%, 0 var(--chamfer)); }
+.panel-body { position: relative; height: 100%; background: linear-gradient(180deg, var(--panel-2), var(--panel) 120px);
+  clip-path: polygon(calc(var(--chamfer) - .5px) 0, 100% 0, 100% calc(100% - var(--chamfer) + .5px), calc(100% - var(--chamfer) + .5px) 100%, 0 100%, 0 calc(var(--chamfer) - .5px));
+  padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.panel-body::after { content: ""; position: absolute; top: 0; right: 0; width: 22px; height: 22px; border-top: 2px solid var(--gold); border-right: 2px solid var(--gold); pointer-events: none; }
+.panel-body::before { content: ""; position: absolute; bottom: 0; left: 0; width: 22px; height: 22px; border-bottom: 2px solid var(--gold); border-left: 2px solid var(--gold); pointer-events: none; }
+.panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-head h2 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; text-wrap: balance; }
+.panel-head .tag { font-family: var(--font-mono); font-size: 11px; color: var(--gold); border: 1px solid var(--gold-dim); padding: 1px 6px; }
+.panel-head .meta { margin-left: auto; font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+.panel-head::after { content: ""; flex: 1 1 40px; order: 2; height: 1px; background: linear-gradient(90deg, var(--line), transparent); min-width: 20px; }
+.panel-head .meta { order: 3; margin-left: 0; }
+
+.reveal .panel { animation: rise .7s cubic-bezier(.2, .7, .2, 1) both; }
+.reveal .panel:nth-of-type(2) { animation-delay: .08s; }
+.reveal section:nth-of-type(2) .panel, .reveal > .panel:nth-of-type(1) { animation-delay: .14s; }
+@keyframes rise { from { opacity: .001; transform: translateY(14px); } }
+
+/* ---------- RADAR ---------- */
+.radar-wrap { position: relative; margin: 0 -6px; }
+#graph { height: 540px; width: 100%; }
+@media (max-width: 1000px) { #graph { height: 440px; } }
+@media (max-width: 560px) { #graph { height: 360px; } }
+#graph .vis-network { outline: none; }
+.radar-foot { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 11px; color: var(--muted); letter-spacing: .06em; }
+.lg { display: inline-flex; align-items: center; gap: 6px; }
+.lg i { width: 9px; height: 9px; border-radius: 50%; }
+.radar-foot .btn-mini { margin-left: auto; }
+div.vis-tooltip { background: rgba(4, 12, 20, .95) !important; border: 1px solid var(--line) !important; color: var(--text) !important; font-family: var(--font-mono) !important;
+  font-size: 12px !important; border-radius: 0 !important; padding: 8px 10px !important; box-shadow: 0 0 18px rgba(63, 224, 255, .25) !important; }
+.tip-t { font-family: var(--font-display); font-weight: 700; letter-spacing: .1em; color: var(--cyan); }
+
+/* ---------- TARGET LOCK ---------- */
+.lock-empty { color: var(--muted); font-size: 13px; }
+.lock-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.lock-ticker { font-size: 34px; font-weight: 700; letter-spacing: .08em; line-height: 1; text-shadow: 0 0 16px rgba(63, 224, 255, .45); }
+.lock-sub { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-top: 6px; }
+.lock-anim { animation: lockin .45s cubic-bezier(.2, .8, .2, 1); }
+@keyframes lockin { from { opacity: .2; transform: scale(.985); filter: brightness(1.6); } }
+.label { font-size: 10.5px; letter-spacing: .18em; color: var(--muted); text-transform: uppercase; }
+.zgauge { position: relative; height: 34px; margin-top: 26px; }
+.zgauge .zone { position: absolute; top: 10px; height: 10px; }
+.zone.z-d { background: linear-gradient(90deg, rgba(176, 124, 255, .15), rgba(176, 124, 255, .55)); }
+.zone.z-b { background: rgba(255, 182, 39, .75); box-shadow: 0 0 12px rgba(255, 182, 39, .45); }
+.zone.z-m { background: linear-gradient(90deg, rgba(46, 230, 160, .55), rgba(46, 230, 160, .12)); }
+.zgauge .tick { position: absolute; top: 22px; font-family: var(--font-mono); font-size: 10px; color: var(--muted); transform: translateX(-50%); }
+.zgauge .tick::before { content: ""; position: absolute; left: 50%; top: -3px; width: 1px; height: 3px; background: var(--muted); }
+.zmark { position: absolute; top: 0; transform: translateX(-50%); transition: left .6s cubic-bezier(.2, .8, .2, 1); }
+.zmark::before { content: ""; display: block; width: 2px; height: 30px; margin: 0 auto; background: #fff; box-shadow: 0 0 8px #fff; }
+.zmark span { position: absolute; bottom: 31px; left: 50%; transform: translateX(-50%); font-family: var(--font-mono); font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: #fff; color: #04080e; padding: 0 5px; }
+.zlegend { position: relative; height: 14px; font-size: 9.5px; letter-spacing: .16em; }
+.zlegend span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.znote { font-size: 11.5px; color: var(--muted); }
+.statgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; }
+.stat b { display: block; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; margin-top: 2px; }
+.stat small { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.lock-levels { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 14px; align-items: stretch; }
+@media (max-width: 420px) { .lock-levels { grid-template-columns: 112px minmax(0, 1fr); } .statgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ladder { position: relative; height: 168px; margin: 8px 0; }
+.ladder-track { position: absolute; left: 6px; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, var(--mom), var(--cyan) 50%, var(--avoid)); box-shadow: 0 0 10px rgba(63, 224, 255, .5); }
+.rung { position: absolute; left: 0; right: 0; transform: translateY(-50%); display: flex; align-items: center; gap: 6px; padding-left: 18px; font-family: var(--font-mono); font-size: 12px; }
+.rung::before { content: ""; position: absolute; left: 1px; width: 13px; height: 2px; background: currentColor; box-shadow: 0 0 6px currentColor; }
+.rung em { font-style: normal; font-family: var(--font-display); font-size: 10px; letter-spacing: .14em; color: var(--muted); }
+.rung.tp { color: var(--mom); } .rung.sl { color: var(--avoid); } .rung.en { color: var(--cyan); }
+.rung small { color: var(--muted); }
+.levels-info { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-content: center; }
+.explain { margin: 0; font-size: 13px; color: #a9c9d8; border-left: 2px solid var(--gold-dim); padding-left: 10px; }
+.explain-note { font-size: 11.5px; color: var(--muted); font-style: italic; }
+
+/* ---------- BADGE ---------- */
+.badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; font-size: 11px; font-weight: 700; letter-spacing: .12em; white-space: nowrap; border: 1px solid currentColor; }
+.b-BUY_LAGGING { background: var(--buy); color: #1d1200; border-color: var(--buy); box-shadow: 0 0 14px rgba(255, 182, 39, .5); }
+.b-MOMENTUM { color: var(--mom); background: var(--mom-a); }
+.b-DIVERGENT { color: var(--div); background: var(--div-a); }
+.b-AVOID { color: var(--avoid); background: var(--avoid-a); }
+.b-NEUTRAL { color: var(--neu); background: var(--neu-a); }
+.b-g { height: 20px; font-size: 10px; padding: 0 7px; }
+.g-PASSED { color: var(--mom); } .g-NO_NEWS { color: var(--neu); } .g-BYPASSED { color: var(--buy); } .g-REJECTED { color: var(--avoid); }
+.o-OPEN { color: var(--cyan); } .o-TP { color: var(--mom); } .o-SL { color: var(--avoid); } .o-TIMEOUT { color: var(--neu); } .o-EXPIRED { color: #4d5f6b; }
+
+/* ---------- PAPAN SINYAL ---------- */
+.summary { display: flex; gap: 6px; flex-wrap: wrap; order: 3; }
+.tbl-wrap { overflow-x: auto; margin: 0 -16px; padding: 0 16px; }
+table.hud { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.hud th { font-size: 10.5px; font-weight: 600; letter-spacing: .16em; color: var(--muted); text-transform: uppercase; text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.hud td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; font-family: var(--font-mono); font-size: 13px; }
+.hud .r { text-align: right; }
+.hud td.tk { font-family: var(--font-display); font-weight: 700; font-size: 15px; letter-spacing: .08em; }
+.hud tbody tr.sel { background: rgba(63, 224, 255, .07); box-shadow: inset 2px 0 0 var(--cyan); }
+.hud tbody tr.buy { box-shadow: inset 3px 0 0 var(--buy); }
+.hud tbody tr.buy.sel { box-shadow: inset 3px 0 0 var(--buy); background: rgba(255, 182, 39, .08); }
+.hud tbody tr.click { cursor: pointer; transition: background .15s; }
+.hud tbody tr.click:hover { background: rgba(63, 224, 255, .05); }
+.empty-row td { text-align: center; color: var(--muted); padding: 22px; font-family: var(--font-display); white-space: normal; }
+.flash { animation: flash 1.2s ease; }
+@keyframes flash { 0% { color: #fff; text-shadow: 0 0 10px var(--cyan); } }
+.cards { display: none; gap: 10px; }
+.card { text-align: left; width: 100%; border: 1px solid var(--line-soft); background: rgba(10, 26, 39, .7); padding: 12px; cursor: pointer; display: grid; gap: 10px;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); }
+.card.buy { border-color: rgba(255, 182, 39, .6); box-shadow: inset 3px 0 0 var(--buy); }
+.card.sel { border-color: var(--cyan); background: rgba(63, 224, 255, .07); }
+.card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card-top b { font-size: 18px; letter-spacing: .08em; }
+.card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.card-grid span { font-size: 9.5px; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; }
+.card-grid b { display: block; font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0; text-transform: none; }
+@media (max-width: 760px) { .tbl-signal { display: none; } .cards { display: grid; } }
+.skipped { font-size: 11.5px; color: var(--muted); }
+.skipped b { color: var(--text); }
+
+/* ---------- KINERJA ---------- */
+.perf-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; align-items: center; }
+@media (max-width: 760px) { .perf-top { grid-template-columns: minmax(0, 1fr); } }
+.rings { display: flex; gap: 14px; justify-content: center; }
+.ring { position: relative; width: 116px; height: 116px; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring .bg { fill: none; stroke: var(--line-soft); stroke-width: 7; }
+.ring .fg { fill: none; stroke-width: 7; stroke-linecap: butt; animation: ringin 1.3s cubic-bezier(.2, .8, .2, 1) both; filter: drop-shadow(0 0 4px currentColor); }
+.ring .tk { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 1 7.8; }
+@keyframes ringin { from { stroke-dashoffset: var(--c); } }
+.ring-txt { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.ring-txt b { font-family: var(--font-mono); font-size: 20px; font-weight: 600; }
+.ring-txt small { font-size: 9px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; max-width: 74px; line-height: 1.15; margin: 2px auto 0; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 560px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpi { border-left: 2px solid var(--gold-dim); padding: 2px 0 2px 10px; }
+.kpi b { display: block; font-family: var(--font-mono); font-size: 17px; font-weight: 600; margin-top: 2px; }
+.kpi small { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.equity { display: grid; gap: 6px; }
+.equity-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.equity-head b { font-family: var(--font-mono); font-size: 15px; }
+.equity svg { width: 100%; height: 130px; display: block; }
+.equity-axis { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.perf-tables { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 900px) { .perf-tables { grid-template-columns: minmax(0, 1fr); } }
+.hud.sm td { padding: 6px 8px; font-size: 12px; }
+.factors-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.spark { display: grid; gap: 6px; }
+.spark-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.spark-box { position: relative; border: 1px solid var(--line-soft); background: rgba(4, 12, 20, .6); }
+.spark-box svg { display: block; width: 100%; height: 132px; }
+.spark-y { position: absolute; left: 6px; font-family: var(--font-mono); font-size: 10px; color: var(--muted); pointer-events: none; }
+.spark-y.top { top: 4px; } .spark-y.bot { bottom: 4px; }
+.spark-15 { position: absolute; top: 4px; right: 6px; font-size: 9.5px; letter-spacing: .14em; color: var(--buy); pointer-events: none; }
+.spark-x { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.spark-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; }
+.spark-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.spark-legend i { width: 16px; height: 0; border-top: 2px solid var(--lc); }
+.spark-legend i.dash { border-top-style: dashed; }
+.spark-legend i.dot { border-top-style: dotted; border-top-width: 3px; }
+.spark-legend b { font-family: var(--font-mono); font-weight: 600; }
+.spark-empty { font-size: 12px; color: var(--muted); border: 1px dashed var(--line-soft); padding: 10px; }
+.cl-chip { display: inline-flex; align-items: center; height: 19px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  color: var(--cc, var(--muted)); border: 1px solid var(--cc, var(--line)); background: rgba(255, 255, 255, .03); white-space: nowrap; }
+.cl-chip.none { color: var(--muted); border-style: dashed; border-color: var(--line); }
+.net-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .net-grid { grid-template-columns: minmax(0, 1fr); } }
+.cl-list { display: grid; gap: 10px; }
+.cl-card { border: 1px solid var(--line-soft); border-left: 3px solid var(--cc); background: rgba(10, 26, 39, .55); padding: 10px 12px; display: grid; gap: 8px; }
+.cl-card-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cl-card-top b { font-size: 15px; letter-spacing: .12em; color: var(--cc); }
+.cl-members { display: flex; gap: 6px; flex-wrap: wrap; }
+.cl-member { font-family: var(--font-display); font-weight: 700; letter-spacing: .06em; font-size: 12.5px; padding: 1px 7px; border: 1px solid var(--line-soft); cursor: pointer; background: transparent; color: var(--text); }
+.cl-member:hover { border-color: var(--cc); }
+.cl-member.lead::after { content: " ▲"; color: var(--gold); font-size: 10px; }
+.cl-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.heat-wrap { overflow-x: auto; }
+table.heat { border-collapse: separate; border-spacing: 2px; font-family: var(--font-mono); font-size: 11.5px; margin: 0 auto; }
+.heat th { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: .06em; padding: 2px 4px; color: var(--muted); white-space: nowrap; }
+.heat th.rowh { text-align: right; }
+.heat td { width: 44px; height: 30px; text-align: center; color: var(--text); font-variant-numeric: tabular-nums; }
+.heat td.self { color: var(--muted); }
+.heat-legend { display: flex; justify-content: center; gap: 12px; font-size: 10.5px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; }
+.factor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.factor { border: 1px solid var(--line-soft); background: rgba(10, 26, 39, .55); padding: 10px 12px; display: grid; gap: 2px; min-width: 0; }
+.factor h3 { margin: 0 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--gold); }
+.frow { display: grid; grid-template-columns: minmax(0, 1fr) 30px 76px 58px; gap: 8px; align-items: center; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); }
+.frow:last-of-type { border-bottom: 0; }
+.frow.head { font-size: 9.5px; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; padding-top: 0; }
+.frow .n, .frow .avg { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.frow.thin { opacity: .45; }
+.wbar { position: relative; height: 15px; background: var(--line-soft); }
+.wbar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(63, 224, 255, .35), rgba(63, 224, 255, .75)); }
+.wbar span { position: relative; font-family: var(--font-mono); font-size: 10.5px; padding-left: 4px; line-height: 15px; }
+.factor .miss { font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.hud.sm th { padding: 5px 8px; }
+.note { font-size: 12px; padding: 8px 10px; border: 1px dashed var(--gold-dim); color: var(--gold); }
+.note.err { border-color: var(--avoid); color: #ffc4cd; }
+
+/* ---------- LOG MISI ---------- */
+.log { font-family: var(--font-mono); font-size: 12.5px; display: grid; gap: 2px; max-height: 360px; overflow: auto; }
+.log-line { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 6px 8px; border-left: 2px solid var(--line-soft); }
+.log-line:hover { background: rgba(63, 224, 255, .04); border-left-color: var(--cyan); }
+.log-line .t { color: var(--muted); }
+.log-line .tk { font-family: var(--font-display); font-weight: 700; letter-spacing: .08em; color: var(--text); min-width: 46px; }
+.log-line .arrow { color: var(--gold-dim); }
+.log-line .why { color: var(--muted); font-size: 11.5px; flex-basis: 100%; padding-left: 2px; }
+
+/* ---------- KALIBRASI ---------- */
+.calib-body { display: grid; gap: 14px; }
+.calib-hint { font-size: 11px; color: var(--muted); }
+.sliders { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 900px) { .sliders { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .sliders { grid-template-columns: minmax(0, 1fr); } }
+.slider label { display: flex; justify-content: space-between; gap: 8px; }
+.slider label b { font-family: var(--font-mono); color: var(--gold); font-size: 12px; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; }
+input[type=range]::-webkit-slider-runnable-track { height: 2px; background: linear-gradient(90deg, var(--cyan), var(--line-soft)); }
+input[type=range]::-moz-range-track { height: 2px; background: var(--line); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 16px; margin-top: -7px; background: var(--gold); box-shadow: 0 0 8px var(--gold); border: 0; }
+input[type=range]::-moz-range-thumb { width: 12px; height: 16px; background: var(--gold); border: 0; border-radius: 0; }
+.calib-foot { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; font-size: 11.5px; color: var(--muted); }
+
+/* ---------- ALERT & TOAST ---------- */
+.hud-alert { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border: 1px solid; font-size: 13px; position: relative; z-index: 1; }
+.hud-alert.danger { border-color: var(--avoid); background: var(--avoid-a); color: #ffd3da; }
+.hud-alert.info { border-color: var(--gold-dim); background: rgba(232, 193, 112, .08); color: var(--gold); }
+.hud-alert button { margin-left: auto; background: none; border: 0; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
+.toast { position: fixed; z-index: 80; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+  background: rgba(10, 10, 4, .92); border: 1px solid var(--buy); color: var(--buy); padding: 10px 18px; text-align: center; min-width: 240px; max-width: calc(100vw - 32px);
+  box-shadow: 0 0 28px rgba(255, 182, 39, .45); transition: opacity .3s, transform .3s;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+.toast b { display: block; font-size: 15px; letter-spacing: .3em; }
+.toast span { font-family: var(--font-mono); font-size: 13px; color: var(--text); }
+
+footer.disc { font-size: 11.5px; color: var(--muted); max-width: 95ch; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .fx-beam { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="fx fx-glow"></div>
+<div class="fx fx-grid"></div>
+<div class="fx fx-beam"></div>
+<div class="fx fx-scan"></div>
+
+<!-- ========== BOOT SEQUENCE ========== -->
+<div id="boot" class="boot" hidden>
+  <div class="boot-inner">
+    <svg class="boot-core" viewBox="0 0 132 132" aria-hidden="true">
+      <circle cx="66" cy="66" r="62" fill="none" stroke="rgba(63,224,255,.18)" stroke-width="1"/>
+      <g class="r1"><circle cx="66" cy="66" r="52" fill="none" stroke="#3fe0ff" stroke-width="3" stroke-dasharray="40 14"/></g>
+      <g class="r2"><circle cx="66" cy="66" r="40" fill="none" stroke="#e8c170" stroke-width="2" stroke-dasharray="6 8"/></g>
+      <circle cx="66" cy="66" r="22" fill="rgba(63,224,255,.15)" stroke="#3fe0ff" stroke-width="1.5"/>
+      <circle cx="66" cy="66" r="7" fill="#d6f4ff"/>
+    </svg>
+    <div class="boot-title">STOCK SNA <span>//</span> DSS</div>
+    <div id="bootLog" class="boot-log"></div>
+    <div class="boot-bar"><i id="bootBar"></i></div>
+    <div class="boot-skip">ketuk untuk lewati</div>
+  </div>
+</div>
+
+<!-- ========== LOGIN ========== -->
+<div id="login" class="boot login" hidden>
+  <form id="loginForm" class="boot-inner" novalidate>
+    <svg class="boot-core" viewBox="0 0 132 132" aria-hidden="true" style="width:96px;height:96px">
+      <circle cx="66" cy="66" r="62" fill="none" stroke="rgba(63,224,255,.18)" stroke-width="1"/>
+      <g class="r1"><circle cx="66" cy="66" r="52" fill="none" stroke="#3fe0ff" stroke-width="3" stroke-dasharray="40 14"/></g>
+      <g class="r2"><circle cx="66" cy="66" r="40" fill="none" stroke="#e8c170" stroke-width="2" stroke-dasharray="6 8"/></g>
+      <circle cx="66" cy="66" r="22" fill="rgba(63,224,255,.15)" stroke="#3fe0ff" stroke-width="1.5"/>
+      <circle cx="66" cy="66" r="7" fill="#d6f4ff"/>
+    </svg>
+    <div class="boot-title">STOCK SNA <span>//</span> DSS</div>
+    <div class="login-sub">Akses terbatas · login diperlukan</div>
+    <div id="stepEmail" class="login-step">
+      <label for="loginEmail" class="label">Email</label>
+      <input id="loginEmail" name="email" type="email" class="hud-input" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="nama@email.com">
+      <label for="loginPass" class="label">Password</label>
+      <input id="loginPass" name="password" type="password" class="hud-input" autocomplete="current-password" placeholder="••••••••">
+      <button id="btnSend" class="btn-hud" type="submit">Masuk</button>
+      <button id="btnMagic" class="btn-mini" type="button">Lupa password? Kirim tautan login ke email</button>
+    </div>
+    <div id="stepCode" class="login-step" hidden>
+      <div class="login-hint">Tautan login dikirim ke <span id="codeEmail" class="nc gold"></span>. Buka tautan itu di browser ini juga. Di iPhone, tekan lama tautannya lalu pilih buka di Safari.</div>
+      <label for="loginCode" class="label">Kode dari email (jika email berisi kode)</label>
+      <input id="loginCode" name="code" type="text" class="hud-input mono" autocomplete="one-time-code" inputmode="numeric" maxlength="10" placeholder="••••••">
+      <button id="btnVerify" class="btn-hud" type="submit">Masuk dengan kode</button>
+      <div class="login-row">
+        <button id="btnBack" class="btn-mini" type="button">Kembali ke password</button>
+        <button id="btnResend" class="btn-mini" type="button">Kirim ulang tautan</button>
+      </div>
+    </div>
+    <div id="loginMsg" class="login-msg" role="status" aria-live="polite"></div>
+  </form>
+</div>
+
+<!-- ========== BAR KOMANDO ========== -->
+<header class="cmdbar">
+  <div class="cmdbar-inner">
+    <div class="brand">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <polygon points="20,2 36,11 36,29 20,38 4,29 4,11" fill="rgba(63,224,255,.08)" stroke="#3fe0ff" stroke-width="1.5"/>
+        <circle cx="20" cy="20" r="3.2" fill="#e8c170"/>
+        <circle cx="20" cy="9" r="2" fill="#3fe0ff"/><circle cx="29.5" cy="25.5" r="2" fill="#3fe0ff"/><circle cx="10.5" cy="25.5" r="2" fill="#3fe0ff"/>
+        <path d="M20 20 L20 9 M20 20 L29.5 25.5 M20 20 L10.5 25.5" stroke="#3fe0ff" stroke-width="1"/>
+      </svg>
+      <div>
+        <div class="brand-title">STOCK SNA <span>//</span> DSS</div>
+        <div class="brand-sub">Market HUD · Social Network Analysis</div>
+      </div>
+    </div>
+    <div class="status-row">
+      <span id="pillLive" class="pill dim"><i></i><span>MEMUAT</span></span>
+      <span id="pillMarket" class="pill dim"><i></i><span>PASAR</span></span>
+      <span id="pillAge" class="pill dim"><i></i><span class="mono">DATA -</span></span>
+      <button id="pillTg" class="pill dim" type="button" title="Status Telegram. Ketuk untuk membuka tes Telegram."><i></i><span>TELEGRAM</span></button>
+      <span class="clock"><small>NY</small><b id="clkNy">--:--</b></span>
+      <span class="clock"><small>WIB</small><b id="clkWib">--:--:--</b></span>
+      <label class="toggle" for="autoRefresh"><input type="checkbox" id="autoRefresh" checked><span></span>AUTO 60S</label>
+      <label class="toggle" for="sfx"><input type="checkbox" id="sfx"><span></span>SUARA</label>
+      <button id="btnRefresh" class="btn-hud" type="button"><span id="btnLabel">Refresh</span></button>
+      <span id="userPill" class="pill dim user-pill" hidden><i></i><span class="nc"></span></span>
+      <button id="btnLogout" class="btn-mini" type="button" hidden>Keluar</button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <div id="alertBox"></div>
+
+  <section class="grid-top">
+    <!-- RADAR -->
+    <div class="panel">
+      <div class="panel-body">
+        <div class="panel-head">
+          <span class="tag">HUB QQQ</span><h2>Radar Korelasi</h2>
+          <span class="meta" id="radarMeta">jarak ke inti = kekuatan korelasi</span>
+        </div>
+        <div class="radar-wrap"><div id="graph" role="img" aria-label="Radar korelasi saham terhadap QQQ"></div></div>
+        <div class="radar-foot">
+          <span class="lg"><i style="background:var(--buy)"></i>BUY LAGGING</span>
+          <span class="lg"><i style="background:var(--mom)"></i>MOMENTUM</span>
+          <span class="lg"><i style="background:var(--div)"></i>DIVERGENT</span>
+          <span class="lg"><i style="background:var(--avoid)"></i>AVOID</span>
+          <span class="lg"><i style="background:var(--neu)"></i>NEUTRAL</span>
+          <span class="lg"><i style="background:none;border:1px dashed var(--gold);border-radius:50%"></i>ambang r</span>
+          <label class="toggle" for="netToggle"><input type="checkbox" id="netToggle" checked><span></span>JARINGAN</label>
+          <button id="btnResetView" class="btn-mini" type="button">Reset view</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TARGET LOCK -->
+    <div class="panel">
+      <div class="panel-body">
+        <div class="panel-head"><span class="tag">TARGET</span><h2>Target Lock</h2></div>
+        <div id="detailPanel"><p class="lock-empty">Pilih node di radar atau saham di papan sinyal.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PAPAN SINYAL -->
+  <section class="panel">
+    <div class="panel-body">
+      <div class="panel-head"><span class="tag">LIVE</span><h2>Papan Sinyal</h2><span id="signalSummary" class="summary"></span></div>
+      <div class="tbl-wrap tbl-signal">
+        <table class="hud">
+          <thead><tr>
+            <th>Ticker</th><th class="r">Harga</th><th class="r">r</th><th class="r nc">β</th><th class="r">Ret 15m</th><th class="r">Ekspektasi</th>
+            <th class="r">Lag z</th><th>Klaster</th><th class="r">z klaster</th><th class="r">Vol 15m</th><th>Sinyal</th><th class="r">SL / TP</th>
+          </tr></thead>
+          <tbody id="signalBody"></tbody>
+        </table>
+      </div>
+      <div id="signalCards" class="cards"></div>
+      <div id="skippedNote" class="skipped"></div>
+    </div>
+  </section>
+
+  <!-- JARINGAN ANTAR-SAHAM -->
+  <section class="panel">
+    <div class="panel-body">
+      <div class="panel-head"><span class="tag">SNA</span><h2>Jaringan Antar-Saham</h2><span class="meta" id="netMeta"></span></div>
+      <div class="net-grid">
+        <div>
+          <div class="label" style="margin-bottom:8px">Klaster <span class="nc">· saham yang bergerak bersama</span></div>
+          <div id="clusterList" class="cl-list"></div>
+        </div>
+        <div>
+          <div class="label" style="margin-bottom:8px">Matriks korelasi return 5 menit</div>
+          <div class="heat-wrap"><table class="heat" id="heatmap"></table></div>
+          <div class="heat-legend"><span>■ <span style="color:#3fe0ff">cyan</span> = bergerak searah</span><span>■ <span style="color:#ff4d6a">merah</span> = berlawanan</span><span>makin pekat = makin kuat</span></div>
+        </div>
+      </div>
+      <div class="calib-hint">▲ = pemimpin klaster (lead score tertinggi: geraknya cenderung mendahului yang lain 5 menit kemudian). Lag terhadap klaster dicatat sebagai faktor, belum mengubah aturan alert.</div>
+    </div>
+  </section>
+
+  <!-- KINERJA -->
+  <section class="panel">
+    <div class="panel-body">
+      <div class="panel-head"><span class="tag">STAT</span><h2>Kinerja Sinyal</h2><span class="meta" id="perfMode">sinyal tertutup · belum termasuk komisi &amp; slippage</span></div>
+      <div id="perfWarn"></div>
+      <div id="perfTop" class="perf-top"></div>
+      <div id="perfEquity" class="equity"></div>
+      <div class="perf-tables">
+        <div class="tbl-wrap">
+          <table class="hud sm">
+            <thead><tr><th>Kelompok</th><th class="r">N</th><th class="r">Win</th><th class="r">Rata²</th><th class="r">Total</th><th class="r">TP/SL/TO</th></tr></thead>
+            <tbody id="perfGroups"></tbody>
+          </table>
+        </div>
+        <div class="tbl-wrap">
+          <table class="hud sm">
+            <thead><tr><th>Ticker</th><th class="r">N</th><th class="r">Win</th><th class="r">Rata²</th><th class="r">Total</th><th class="r">TP/SL/TO</th></tr></thead>
+            <tbody id="perfTickers"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="factors-head">
+        <span class="label">Analisis faktor konteks</span>
+        <span class="calib-hint">Baris pudar = kurang dari 10 sinyal, belum layak disimpulkan. Win = return &gt; 0.</span>
+      </div>
+      <div id="perfFactors" class="factor-grid"></div>
+    </div>
+  </section>
+
+  <!-- LOG MISI -->
+  <section class="panel">
+    <div class="panel-body">
+      <div class="panel-head"><span class="tag">LOG</span><h2>Log Misi</h2><span id="historySummary" class="summary"></span></div>
+      <div id="historyMode" class="calib-hint"></div>
+      <div id="historyBody" class="log"></div>
+    </div>
+  </section>
+
+  <!-- KALIBRASI -->
+  <section class="panel calib" id="calibPanel">
+    <div class="panel-body">
+      <div class="panel-head"><span class="tag">CFG</span><h2>Kalibrasi Tampilan</h2>
+        <button id="btnCalib" class="btn-mini meta" type="button" aria-expanded="false" aria-controls="calibBody">Buka</button></div>
+      <div id="calibBody" class="calib-body" hidden>
+      <div class="sliders">
+        <div class="slider"><label for="rngQqq" class="label">QQQ 15m minimal <b id="lblQqq"></b></label><input type="range" id="rngQqq" min="0.05" max="1" step="0.05"></div>
+        <div class="slider"><label for="rngCorr" class="label">Korelasi minimal <b id="lblCorr"></b></label><input type="range" id="rngCorr" min="0.3" max="0.95" step="0.05"></div>
+        <div class="slider"><label for="rngZLag" class="label">Lag z BUY <b id="lblZLag"></b></label><input type="range" id="rngZLag" min="0.5" max="2.5" step="0.1"></div>
+        <div class="slider"><label for="rngZDiv" class="label">Lag z DIVERGENT <b id="lblZDiv"></b></label><input type="range" id="rngZDiv" min="1.5" max="5" step="0.25"></div>
+      </div>
+      <div class="calib-foot">
+        <button id="btnResetCfg" class="btn-mini" type="button">Reset default</button>
+        <span>Slider hanya mengubah tampilan di perangkat ini. Alert Telegram dan log memakai threshold server.</span>
+      </div>
+      <div class="tg-row">
+        <span class="label">Telegram</span>
+        <button id="btnTgTest" class="btn-mini" type="button">Kirim pesan tes</button>
+        <span id="tgResult" role="status" aria-live="polite">Kirim pesan tes untuk memastikan bot dan chat ID tersambung.</span>
+      </div>
+      </div>
+      <div id="serverCfg" class="calib-hint mono"></div>
+    </div>
+  </section>
+
+  <footer class="disc">
+    <strong>Disclaimer:</strong> Alat bantu keputusan untuk edukasi dan analisis, bukan saran investasi. Sinyal bersifat statistik dan dapat salah.
+    Data berbasis bar 5 menit dan diperbarui tiap beberapa menit, bukan tick real-time. Day trading berisiko tinggi; level SL/TP hanya ilustrasi,
+    dan kinerja historis tidak menjamin hasil di masa depan.
+  </footer>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* =====================================================================
+ *  KONFIGURASI
+ * ===================================================================== */
+const SUPABASE_FUNCTION_URL = 'https://hwezplmtngqbblhdaxio.supabase.co/functions/v1/dss-sna';
+const SUPABASE_URL = 'https://hwezplmtngqbblhdaxio.supabase.co';
+// Anon key bersifat publik (memang untuk frontend). Jangan pernah menaruh service_role key di sini.
+const SUPABASE_ANON_KEY = 'sb_publishable_4SkHZOtDBWLDxrZQvG-kCA_YvCEsYu2';
+// true = paksa mode demo (data simulasi) walau URL sudah diisi. Untuk pratinjau tampilan.
+const DEMO_MODE = false;
+// true = dashboard wajib login Supabase Auth (email terdaftar di tabel dashboard_allowlist).
+const AUTH_REQUIRED = true;
+
+const BENCHMARK = 'QQQ';
+const REFRESH_INTERVAL_MS = 60000;   // auto refresh (hanya membaca snapshot, tidak memakai kredit API data)
+const FETCH_TIMEOUT_MS    = 10000;
+const STALE_AFTER_MS      = 480000;  // scan berjalan tiap 5 menit; > 8 menit saat pasar buka dianggap basi
+const HISTORY_LIMIT       = 30;
+const PERF_LIMIT          = 1000;
+const PERF_MIN_SAMPLE     = 30;
+const DEFAULT_SL_PCT = 0.9;
+const DEFAULT_TP_PCT = 1.5;
+
+const DEFAULT_CFG = { qqqThreshold: 0.2, corrThreshold: 0.75, zLag: 1.0, zDiv: 3.0 };
+const CFG_STORAGE_KEY = 'stockSnaDss.cfg.v3';
+const PREF_STORAGE_KEY = 'stockSnaDss.prefs.v1';
+const BOOT_SESSION_KEY = 'stockSnaDss.booted';
+
+const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const COARSE = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+
+const COLORS = { cyan: '#3fe0ff', gold: '#e8c170', text: '#d6f4ff', muted: '#6f93a6', bg: '#04080e',
+  buy: '#ffb627', mom: '#2ee6a0', div: '#b07cff', avoid: '#ff4d6a', neu: '#7d909c' };
+const CANVAS_FONT = '"Chakra Petch", "Segoe UI", system-ui, sans-serif';
+const CANVAS_MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace';
+
+const CLUSTER_COLORS = ['#e8c170', '#ff7ad9', '#9ab8ff', '#ff9f5a', '#7ef0c8', '#c9a7ff'];
+function clusterColor(id) {
+  if (!id || !state.data || !state.data.network) return null;
+  const i = state.data.network.clusters.findIndex((c) => c.id === id);
+  return i < 0 ? null : CLUSTER_COLORS[i % CLUSTER_COLORS.length];
+}
+function clChip(id) {
+  const c = clusterColor(id);
+  return c ? '<span class="cl-chip" style="--cc:' + c + '">' + escapeHtml(id) + '</span>' : '<span class="cl-chip none">solo</span>';
+}
+function leadText(v) { return !isNum(v) ? '-' : v > 0.05 ? 'cenderung memimpin' : v < -0.05 ? 'cenderung mengikuti' : 'netral'; }
+const SIGNALS = {
+  BUY_LAGGING: { label: 'BUY LAGGING', short: 'BUY', color: COLORS.buy,   order: 0 },
+  MOMENTUM:    { label: 'MOMENTUM',    short: 'MOM', color: COLORS.mom,   order: 1 },
+  DIVERGENT:   { label: 'DIVERGENT',   short: 'DIV', color: COLORS.div,   order: 2 },
+  AVOID:       { label: 'AVOID',       short: 'AVD', color: COLORS.avoid, order: 3 },
+  NEUTRAL:     { label: 'NEUTRAL',     short: 'NEU', color: COLORS.neu,   order: 4 }
+};
+const GUARD = { PASSED: 'PASSED', NO_NEWS: 'NO NEWS', BYPASSED: 'BYPASSED', REJECTED: 'REJECTED' };
+const OUTCOME = { OPEN: 'OPEN', TP: 'TP', SL: 'SL', TIMEOUT: 'TIMEOUT', EXPIRED: 'EXPIRED' };
+
+/* =====================================================================
+ *  STATE
+ * ===================================================================== */
+const state = {
+  data: null, mode: 'simulation', liveError: null,
+  selected: null, lockStart: 0,
+  cfg: loadCfg(), loading: false, lastRefreshAt: 0,
+  history: { rows: [], total: null, mode: 'simulation', error: null },
+  perf: { rows: [], mode: 'simulation', error: null },
+  rows: [], positions: {}, prevSignals: null, acquire: {}, prevVals: {},
+  booting: false, pendingAcquire: false, appStarted: false, showNet: true
+};
+let sb = null;            // klien Supabase Auth (hanya jika login diwajibkan)
+let network = null, nodesDS = null, edgesDS = null, userMovedView = false;
+
+/* =====================================================================
+ *  UTILITAS
+ * ===================================================================== */
+const $ = (id) => document.getElementById(id);
+const isNum = (v) => typeof v === 'number' && isFinite(v);
+const toNum = (v) => (v === null || v === undefined || v === '') ? NaN : Number(v);
+const optNum = (v) => { const n = toNum(v); return isNum(n) ? n : null; };
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+const rnd = (v, d) => Number(v.toFixed(d));
+
+function escapeHtml(str) {
+  return String(str === null || str === undefined ? '' : str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function fmtPct(v, d = 2) { return isNum(v) ? (v > 0 ? '+' : '') + v.toFixed(d) + '%' : '-'; }
+function fmtNum(v, d = 2) { return isNum(v) ? v.toFixed(d) : '-'; }
+function fmtSigned(v, d = 2) { return isNum(v) ? (v > 0 ? '+' : '') + v.toFixed(d) : '-'; }
+function fmtPrice(v) { return isNum(v) ? '$' + v.toFixed(2) : '-'; }
+function fmtVolume(v) {
+  if (!isNum(v)) return '-';
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return String(Math.round(v));
+}
+function pctClass(v) { return (!isNum(v) || v === 0) ? '' : (v > 0 ? 'pos' : 'neg'); }
+function effZDiv(cfg) { return Math.max(cfg.zDiv, cfg.zLag + 0.1); }
+function zClass(z, cfg) {
+  if (!isNum(z)) return '';
+  if (z <= -effZDiv(cfg)) return 'z-div';
+  if (z <= -cfg.zLag) return 'z-buy';
+  return z > 0 ? 'pos' : '';
+}
+
+function storeGet(key, storage = 'local') {
+  try { const s = storage === 'local' ? window.localStorage : window.sessionStorage; return s.getItem(key); } catch (e) { return null; }
+}
+function storeSet(key, val, storage = 'local') {
+  try { const s = storage === 'local' ? window.localStorage : window.sessionStorage; s.setItem(key, val); } catch (e) { /* abaikan */ }
+}
+function loadCfg() {
+  try {
+    const raw = storeGet(CFG_STORAGE_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      const out = Object.assign({}, DEFAULT_CFG);
+      Object.keys(DEFAULT_CFG).forEach((k) => { if (isNum(p[k])) out[k] = p[k]; });
+      return out;
+    }
+  } catch (e) { /* abaikan */ }
+  return Object.assign({}, DEFAULT_CFG);
+}
+function saveCfg() { storeSet(CFG_STORAGE_KEY, JSON.stringify(state.cfg)); }
+
+function isPlaceholder(s) { return typeof s !== 'string' || !s.startsWith('http') || s.includes('YOUR_'); }
+function isUrlConfigured() { return !DEMO_MODE && !isPlaceholder(SUPABASE_FUNCTION_URL); }
+function isAnonKeyConfigured() { return typeof SUPABASE_ANON_KEY === 'string' && SUPABASE_ANON_KEY.length > 20 && !SUPABASE_ANON_KEY.includes('YOUR_'); }
+function isDbConfigured() { return !DEMO_MODE && !isPlaceholder(SUPABASE_URL) && isAnonKeyConfigured(); }
+function authEnabled() { return AUTH_REQUIRED && !DEMO_MODE && isDbConfigured(); }
+async function getAccessToken() {
+  if (!sb) return null;
+  try { const { data } = await sb.auth.getSession(); return data && data.session ? data.session.access_token : null; } catch (e) { return null; }
+}
+// Saat login diwajibkan, Authorization berisi access token pengguna (bukan anon key),
+// sehingga RLS dan Edge Function bisa memeriksa email pengguna.
+async function authHeaders() {
+  const h = { 'Accept': 'application/json' };
+  if (isAnonKeyConfigured()) h['apikey'] = SUPABASE_ANON_KEY;
+  const tok = await getAccessToken();
+  if (tok) h['Authorization'] = 'Bearer ' + tok;
+  else if (!authEnabled() && isAnonKeyConfigured()) h['Authorization'] = 'Bearer ' + SUPABASE_ANON_KEY;
+  return h;
+}
+
+async function fetchJsonTimeout(url, init) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, Object.assign({ cache: 'no-store', signal: ctrl.signal }, init));
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.clone().json(); detail = j.error || j.message || ''; } catch (e) { /* abaikan */ }
+      const err = new Error('HTTP ' + res.status + (detail ? ': ' + detail : ''));
+      err.status = res.status;
+      throw err;
+    }
+    return { res, json: await res.json() };
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('timeout setelah ' + (FETCH_TIMEOUT_MS / 1000) + ' detik');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* =====================================================================
+ *  WAKTU
+ * ===================================================================== */
+// Libur & tutup lebih awal diambil dari kalender server (mode READ) bila tersedia.
+function getMarketStatus(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now);
+  const get = (t) => parts.find((p) => p.type === t).value;
+  const wd = get('weekday');
+  let h = parseInt(get('hour'), 10);
+  if (h === 24) h = 0;
+  const m = parseInt(get('minute'), 10);
+  const mins = h * 60 + m;
+  const day = get('year') + '-' + get('month') + '-' + get('day');
+  const cal = state && state.data && state.data.calendar;
+  const holiday = !!(cal && cal.holidays.includes(day));
+  const early = !!(cal && cal.early_closes.includes(day));
+  const closeMin = early ? 13 * 60 : 16 * 60;
+  const open = wd !== 'Sat' && wd !== 'Sun' && !holiday && mins >= 9 * 60 + 30 && mins < closeMin;
+  return { open, holiday, early, nyTime: String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') };
+}
+function fmtWibTime(date, withSeconds = true) {
+  return new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: withSeconds ? '2-digit' : undefined, hour12: false })
+    .format(date).replace(/\./g, ':');
+}
+function fmtWibDateTime(date) {
+  const p = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(date);
+  const g = (t) => (p.find((x) => x.type === t) || {}).value || '';
+  return (g('day') + ' ' + g('month')).toUpperCase() + ' ' + g('hour') + ':' + g('minute');
+}
+
+/* =====================================================================
+ *  DSS ENGINE (lag disesuaikan beta)
+ *  ekspektasi = β × return 15m QQQ;  lag z = (return saham − ekspektasi) ÷ σ residual 15m
+ *  Jika QQQ > +qqqThreshold dan r ≥ corrThreshold:
+ *    DIVERGENT z ≤ −zDiv · BUY_LAGGING −zDiv < z ≤ −zLag · MOMENTUM z > −zLag
+ *  AVOID: QQQ < −qqqThreshold dan r ≥ corrThreshold · NEUTRAL: selain itu
+ * ===================================================================== */
+function classifySignal(stock, bench, cfg) {
+  if (!isNum(stock.lag_z)) return 'NEUTRAL';
+  const q = bench.return_15m, r = stock.correlation, z = stock.lag_z;
+  if (q > cfg.qqqThreshold && r >= cfg.corrThreshold) {
+    if (z <= -effZDiv(cfg)) return 'DIVERGENT';
+    if (z <= -cfg.zLag) return 'BUY_LAGGING';
+    return 'MOMENTUM';
+  }
+  if (q < -cfg.qqqThreshold && r >= cfg.corrThreshold) return 'AVOID';
+  return 'NEUTRAL';
+}
+
+function explainSignal(stock, bench, cfg, signal) {
+  const q = bench.return_15m, r = stock.correlation, t = stock.ticker, z = stock.lag_z;
+  const zs = isNum(z) ? z.toFixed(2) : '-';
+  const beta = fmtNum(stock.beta);
+  switch (signal) {
+    case 'BUY_LAGGING':
+      return `QQQ naik ${fmtPct(q)} dan ${t} berkorelasi kuat (r = ${r.toFixed(2)}). Dengan β ${beta}, ${t} seharusnya bergerak ${fmtPct(stock.expected_return)}, `
+           + `tetapi baru ${fmtPct(stock.return_15m)}: tertinggal ${fmtPct(stock.lag_gap)} (z = ${zs}). Berpotensi menyusul.`;
+    case 'MOMENTUM':
+      return `QQQ naik ${fmtPct(q)} dan ${t} sudah bergerak sesuai ekspektasi β ${beta} (${fmtPct(stock.return_15m)} vs ${fmtPct(stock.expected_return)}, z = ${zs}). Peluang menyusul kecil.`;
+    case 'DIVERGENT':
+      return `QQQ naik ${fmtPct(q)} tetapi ${t} tertinggal sangat jauh dari ekspektasi (${fmtPct(stock.return_15m)} vs ${fmtPct(stock.expected_return)}, z = ${zs}). `
+           + `Divergensi sebesar ini biasanya karena faktor khusus perusahaan. Cek berita sebelum mengambil posisi.`;
+    case 'AVOID':
+      return `QQQ turun ${fmtPct(q)} dan ${t} berkorelasi kuat (r = ${r.toFixed(2)}, β ${beta}). Risiko ikut tertekan; hindari entri long.`;
+    default: {
+      const reasons = [];
+      if (!isNum(z)) reasons.push('data beta/lag z belum tersedia dari server');
+      if (Math.abs(q) <= cfg.qqqThreshold) reasons.push(`QQQ belum bergerak signifikan (${fmtPct(q)}, ambang ±${cfg.qqqThreshold.toFixed(2)}%)`);
+      if (r < cfg.corrThreshold) reasons.push(`korelasi ${r.toFixed(2)} di bawah ambang ${cfg.corrThreshold.toFixed(2)}`);
+      if (!reasons.length) reasons.push('QQQ bergerak signifikan tetapi arahnya tidak memenuhi aturan');
+      return 'Tidak ada sinyal: ' + reasons.join('; ') + '.';
+    }
+  }
+}
+
+function computeSignals() {
+  if (!state.data) return [];
+  return state.data.stocks
+    .map((s) => Object.assign({}, s, { signal: classifySignal(s, state.data.benchmark, state.cfg) }))
+    .sort((a, b) => (SIGNALS[a.signal].order - SIGNALS[b.signal].order) || ((a.lag_z ?? 0) - (b.lag_z ?? 0)));
+}
+
+/* =====================================================================
+ *  DATA LIVE (Edge Function, mode baca snapshot)
+ * ===================================================================== */
+function normalizePayload(p) {
+  if (!p || typeof p !== 'object') throw new Error('Respons bukan objek JSON');
+  const b = p.benchmark;
+  if (!b || !isNum(toNum(b.return_15m))) throw new Error('Field benchmark.return_15m tidak valid');
+  if (!Array.isArray(p.stocks)) throw new Error('Field stocks tidak valid');
+  const stocks = p.stocks.map((s, i) => {
+    if (!s || typeof s.ticker !== 'string') throw new Error('stocks[' + i + '].ticker tidak valid');
+    const corr = toNum(s.correlation), ret = toNum(s.return_15m);
+    if (!isNum(corr) || !isNum(ret)) throw new Error('stocks[' + i + '] (' + s.ticker + ') correlation/return_15m tidak valid');
+    return {
+      ticker: s.ticker.toUpperCase().slice(0, 10), correlation: clamp(corr, -1, 1), corr_samples: optNum(s.corr_samples),
+      beta: optNum(s.beta), return_15m: ret, expected_return: optNum(s.expected_return), lag_gap: optNum(s.lag_gap),
+      lag_z: optNum(s.lag_z), resid_sigma_15m: optNum(s.resid_sigma_15m), price: optNum(s.price), volume: optNum(s.volume),
+      atr: optNum(s.atr), stop_loss: optNum(s.stop_loss), take_profit: optNum(s.take_profit),
+      sl_method: s.sl_method === 'ATR' || s.sl_method === 'PCT' ? s.sl_method : null,
+      rvol: optNum(s.rvol), vwap_dist_pct: optNum(s.vwap_dist_pct), gap_pct: optNum(s.gap_pct),
+      day_return_pct: optNum(s.day_return_pct), atr_pct: optNum(s.atr_pct),
+      cluster: typeof s.cluster === 'string' ? s.cluster : null, cluster_size: optNum(s.cluster_size) ?? 1,
+      peer_return_15m: optNum(s.peer_return_15m), peer_beta: optNum(s.peer_beta), peer_z: optNum(s.peer_z),
+      centrality: optNum(s.centrality), lead_score: optNum(s.lead_score),
+      spark: Array.isArray(s.spark) ? s.spark.map(optNum) : null
+    };
+  });
+  let ts = new Date(p.timestamp); if (isNaN(ts.getTime())) ts = new Date();
+  let gen = new Date(p.generated_at); if (isNaN(gen.getTime())) gen = ts;
+  const c = p.config && typeof p.config === 'object' ? p.config : null;
+  return {
+    timestamp: ts.toISOString(), generated_at: gen.toISOString(),
+    market_open: typeof p.market_open === 'boolean' ? p.market_open : getMarketStatus().open,
+    fresh: typeof p.fresh === 'boolean' ? p.fresh : true,
+    benchmark: { ticker: typeof b.ticker === 'string' ? b.ticker.toUpperCase() : BENCHMARK, return_15m: toNum(b.return_15m), price: optNum(b.price), volume: optNum(b.volume),
+      vwap_dist_pct: optNum(b.vwap_dist_pct),
+      spark: Array.isArray(b.spark) ? b.spark.map(optNum) : null,
+      spark_start: typeof b.spark_start === 'string' && !isNaN(Date.parse(b.spark_start)) ? b.spark_start : null },
+    minutes_since_open: optNum(p.minutes_since_open),
+    network: normalizeNetwork(p.network),
+    telegram: p.telegram && typeof p.telegram === 'object' ? { configured: p.telegram.configured === true, daily_recap: p.telegram.daily_recap !== false } : null,
+    calendar: p.calendar && typeof p.calendar === 'object' ? {
+      holidays: Array.isArray(p.calendar.holidays) ? p.calendar.holidays.filter((d) => typeof d === 'string') : [],
+      early_closes: Array.isArray(p.calendar.early_closes) ? p.calendar.early_closes.filter((d) => typeof d === 'string') : []
+    } : null,
+    stocks,
+    skipped: Array.isArray(p.skipped) ? p.skipped.filter((x) => x && typeof x.ticker === 'string').map((x) => ({ ticker: x.ticker, reason: String(x.reason || '') })) : [],
+    config: c ? { qqq: optNum(c.qqq_min_return), corr: optNum(c.corr_min), zLag: optNum(c.z_lag), zDiv: optNum(c.z_divergent),
+      slAtr: optNum(c.sl_atr), tpAtr: optNum(c.tp_atr), sl: optNum(c.sl_pct), tp: optNum(c.tp_pct), holdMax: optNum(c.hold_max_min),
+      peerCorrMin: optNum(c.peer_corr_min), clusterR: optNum(c.cluster_r) } : null
+  };
+}
+function normalizeNetwork(n) {
+  const empty = { tickers: [], matrix: [], edges: [], clusters: [] };
+  if (!n || typeof n !== 'object' || !Array.isArray(n.tickers)) return empty;
+  const tickers = n.tickers.filter((t) => typeof t === 'string').map((t) => t.toUpperCase());
+  const matrix = Array.isArray(n.matrix) ? n.matrix.map((row) => Array.isArray(row) ? row.map(optNum) : []) : [];
+  const edges = Array.isArray(n.edges) ? n.edges.filter((e) => e && typeof e.a === 'string' && typeof e.b === 'string' && isNum(toNum(e.r)))
+    .map((e) => ({ a: e.a.toUpperCase(), b: e.b.toUpperCase(), r: toNum(e.r) })) : [];
+  const clusters = Array.isArray(n.clusters) ? n.clusters.filter((c) => c && typeof c.id === 'string' && Array.isArray(c.members))
+    .map((c) => ({ id: c.id, members: c.members.filter((m) => typeof m === 'string').map((m) => m.toUpperCase()), avg_r: optNum(c.avg_r),
+      avg_return_15m: optNum(c.avg_return_15m), leader: typeof c.leader === 'string' ? c.leader.toUpperCase() : null })) : [];
+  return { tickers, matrix, edges, clusters };
+}
+async function fetchLiveDataFromSupabase() {
+  const { json } = await fetchJsonTimeout(SUPABASE_FUNCTION_URL, { method: 'GET', headers: await authHeaders() });
+  return normalizePayload(json);
+}
+
+/* =====================================================================
+ *  DATA SIMULASI (hanya saat URL belum diisi atau DEMO_MODE)
+ * ===================================================================== */
+function mockLevels(price, atr) {
+  const sl = clamp(1.5 * atr, price * 0.0025, price * 0.02);
+  return { stop_loss: rnd(price - sl, 2), take_profit: rnd(price + sl * (2.5 / 1.5), 2), sl_method: 'ATR' };
+}
+function mockStock(b, qqq, z) {
+  const corr = clamp(b.corr + rand(-0.06, 0.06), -1, 1);
+  const beta = b.beta * rand(0.9, 1.1);
+  const sigma = b.sig * rand(0.85, 1.15);
+  const expected = beta * qqq;
+  const ret = expected + z * sigma;
+  const price = b.price * (1 + rand(-0.01, 0.01));
+  const atr = price * rand(0.002, 0.005);
+  return Object.assign({
+    ticker: b.ticker, correlation: rnd(corr, 2), corr_samples: 48, beta: rnd(beta, 3), return_15m: rnd(ret, 4),
+    expected_return: rnd(expected, 4), lag_gap: rnd(ret - expected, 4), lag_z: rnd(z, 2), resid_sigma_15m: rnd(sigma, 4),
+    price: rnd(price, 2), volume: Math.round(rand(0.8e6, 9e6)), atr: rnd(atr, 4),
+    rvol: rnd(rand(0.5, 2.6), 2), vwap_dist_pct: rnd(rand(-0.4, 0.5), 3), gap_pct: rnd(rand(-1.2, 1.5), 3),
+    day_return_pct: rnd(rand(-1, 1.6), 3), atr_pct: rnd(atr / price * 100, 3)
+  }, mockLevels(price, atr));
+}
+// Jejak harga simulasi 24 bar: QQQ acak dengan 3 bar terakhir sesuai return 15m; saham = β × QQQ + derau,
+// lalu 3 bar terakhir disesuaikan agar cocok dengan return_15m saham.
+function mockSparks(qqq, stocks) {
+  const n = 24, q = [0];
+  for (let i = 1; i < n - 3; i++) q.push(q[i - 1] + rand(-0.09, 0.1));
+  for (let i = n - 3; i < n; i++) q.push(q[i - 1] + qqq / 3);
+  stocks.forEach((s) => {
+    const sp = [0];
+    for (let i = 1; i < n - 3; i++) sp.push(sp[i - 1] + (q[i] - q[i - 1]) * (s.beta || 1) + rand(-0.06, 0.06));
+    for (let i = n - 3; i < n; i++) sp.push(sp[i - 1] + s.return_15m / 3);
+    s.spark = sp.map((v) => rnd(v, 3));
+  });
+  return q.map((v) => rnd(v, 3));
+}
+// Jaringan simulasi: semikonduktor & mega-cap software sebagai dua klaster, SMCI sendirian.
+function mockNetwork(stocks) {
+  const groups = { NVDA: 'A', AMD: 'A', TSM: 'A', MSFT: 'B', META: 'B', AMZN: 'B' };
+  const tickers = stocks.map((s) => s.ticker);
+  const matrix = tickers.map(() => tickers.map(() => null));
+  tickers.forEach((a, i) => tickers.forEach((b, j) => {
+    if (j < i) return;
+    const r = i === j ? 1 : (groups[a] && groups[a] === groups[b]) ? rand(0.76, 0.93) : (groups[a] && groups[b]) ? rand(0.45, 0.66) : rand(0.15, 0.5);
+    matrix[i][j] = matrix[j][i] = rnd(r, 3);
+  }));
+  const edges = [];
+  tickers.forEach((a, i) => tickers.forEach((b, j) => { if (j > i && matrix[i][j] >= 0.6) edges.push({ a, b, r: matrix[i][j] }); }));
+  const clusters = [];
+  ['A', 'B'].forEach((g, gi) => {
+    const members = tickers.filter((t) => groups[t] === g).sort();
+    const ms = stocks.filter((s) => groups[s.ticker] === g);
+    ms.forEach((s) => {
+      const others = ms.filter((o) => o !== s);
+      s.cluster = 'K' + (gi + 1); s.cluster_size = members.length;
+      s.peer_return_15m = rnd(others.reduce((a, o) => a + o.return_15m, 0) / others.length, 4);
+      s.peer_beta = rnd(rand(0.8, 1.2), 3);
+      s.peer_z = rnd(s.lag_z * rand(0.6, 1.2) + rand(-0.5, 0.5), 2);
+    });
+    let pairs = [];
+    members.forEach((a, i) => members.forEach((b, j) => { if (j > i) pairs.push(matrix[tickers.indexOf(a)][tickers.indexOf(b)]); }));
+    clusters.push({ id: 'K' + (gi + 1), members, avg_r: rnd(pairs.reduce((a, b) => a + b, 0) / pairs.length, 3),
+      avg_return_15m: rnd(ms.reduce((a, s) => a + s.return_15m, 0) / ms.length, 4), leader: null });
+  });
+  stocks.forEach((s, i) => {
+    s.centrality = rnd(matrix[i].filter((_, j) => j !== i).reduce((a, b) => a + Math.abs(b), 0) / (tickers.length - 1), 3);
+    s.lead_score = rnd(rand(-0.18, 0.18), 3);
+    if (!s.cluster) { s.cluster = null; s.cluster_size = 1; s.peer_return_15m = null; s.peer_beta = null; s.peer_z = null; }
+  });
+  clusters.forEach((c) => {
+    const ms = stocks.filter((s) => c.members.includes(s.ticker)).sort((a, b) => b.lead_score - a.lead_score);
+    c.leader = ms.length ? ms[0].ticker : null;
+  });
+  return { tickers, matrix, edges, clusters };
+}
+function fallbackMockData() {
+  const base = [
+    { ticker: 'NVDA', corr: 0.88, beta: 1.8, sig: 0.28, price: 145.20 },
+    { ticker: 'AMD',  corr: 0.82, beta: 1.9, sig: 0.35, price: 162.45 },
+    { ticker: 'TSM',  corr: 0.79, beta: 1.5, sig: 0.30, price: 188.30 },
+    { ticker: 'SMCI', corr: 0.66, beta: 2.2, sig: 0.60, price: 41.75 },
+    { ticker: 'META', corr: 0.84, beta: 1.3, sig: 0.25, price: 585.10 },
+    { ticker: 'MSFT', corr: 0.91, beta: 0.9, sig: 0.15, price: 421.60 },
+    { ticker: 'AMZN', corr: 0.80, beta: 1.2, sig: 0.24, price: 196.40 }
+  ];
+  const dice = Math.random();
+  let qqq;
+  if (dice < 0.75) qqq = rand(0.22, 0.60); else if (dice < 0.88) qqq = rand(-0.12, 0.15); else qqq = -rand(0.25, 0.55);
+  const stocks = base.map((b) => mockStock(b, qqq, Math.random() < 0.35 ? rand(-2.4, -1.0) : rand(-0.9, 1.5)));
+  const cfg = state.cfg;
+  if (qqq > cfg.qqqThreshold && !stocks.some((s) => s.correlation >= cfg.corrThreshold && s.lag_z <= -cfg.zLag && s.lag_z > -effZDiv(cfg))) {
+    const i = Math.floor(Math.random() * 3);
+    stocks[i] = mockStock(Object.assign({}, base[i], { corr: 0.9 }), qqq, -(cfg.zLag + 0.4));
+  }
+  if (Math.random() < 0.3) stocks[3].correlation = rnd(rand(-0.4, 0.2), 2);
+  const network = mockNetwork(stocks);
+  const qSpark = mockSparks(qqq, stocks);
+  const now = new Date().toISOString();
+  return normalizePayload({
+    timestamp: now, generated_at: now, market_open: getMarketStatus().open, fresh: true,
+    benchmark: { ticker: BENCHMARK, return_15m: rnd(qqq, 2), price: rnd(512 * (1 + rand(-0.005, 0.005)), 2), volume: Math.round(rand(2e6, 6e6)), vwap_dist_pct: rnd(rand(-0.3, 0.4), 3),
+      spark: qSpark, spark_start: new Date(Math.floor(Date.now() / 300000) * 300000 - 23 * 300000).toISOString() },
+    minutes_since_open: Math.round(rand(20, 370)),
+    network, stocks, skipped: [],
+    config: { qqq_min_return: 0.2, corr_min: 0.75, z_lag: 1, z_divergent: 3, sl_atr: 1.5, tp_atr: 2.5, sl_pct: 0.9, tp_pct: 1.5, hold_max_min: 60 }
+  });
+}
+
+/* =====================================================================
+ *  RIWAYAT & KINERJA (PostgREST: signal_logs)
+ * ===================================================================== */
+function normalizeLog(r) {
+  const status = String(r.ai_status || 'PASSED').toUpperCase();
+  const oc = r.outcome ? String(r.outcome).toUpperCase() : null;
+  return {
+    id: r.id, created_at: new Date(r.created_at), ticker: String(r.ticker || '?').toUpperCase().slice(0, 10),
+    qqq_return: optNum(r.qqq_return), stock_return: optNum(r.stock_return), correlation: optNum(r.correlation), lag_z: optNum(r.lag_z),
+    entry_price: optNum(r.entry_price), stop_loss: optNum(r.stop_loss), take_profit: optNum(r.take_profit),
+    ai_status: GUARD[status] ? status : 'BYPASSED', ai_reason: String(r.ai_reason || ''),
+    blocked: r.blocked === true, alert_sent: r.alert_sent === true, outcome: OUTCOME[oc] ? oc : null,
+    return_pct: optNum(r.return_pct), mfe_pct: optNum(r.mfe_pct), mae_pct: optNum(r.mae_pct), bars_held: optNum(r.bars_held),
+    rvol: optNum(r.rvol), vwap_dist_pct: optNum(r.vwap_dist_pct), qqq_vwap_dist_pct: optNum(r.qqq_vwap_dist_pct),
+    minutes_since_open: optNum(r.minutes_since_open), gap_pct: optNum(r.gap_pct), day_return_pct: optNum(r.day_return_pct), atr_pct: optNum(r.atr_pct),
+    cluster_id: typeof r.cluster_id === 'string' ? r.cluster_id : null, cluster_size: optNum(r.cluster_size), peer_z: optNum(r.peer_z), lead_score: optNum(r.lead_score)
+  };
+}
+async function fetchSignalHistory() {
+  const url = SUPABASE_URL + '/rest/v1/signal_logs?select=*&order=created_at.desc&limit=' + HISTORY_LIMIT;
+  const { res, json } = await fetchJsonTimeout(url, { method: 'GET', headers: Object.assign(await authHeaders(), { 'Prefer': 'count=exact' }) });
+  if (!Array.isArray(json)) throw new Error('Respons riwayat bukan array');
+  const m = /\/(\d+)$/.exec(res.headers.get('content-range') || '');
+  return { rows: json.map(normalizeLog), total: m ? parseInt(m[1], 10) : json.length };
+}
+async function fetchPerformance() {
+  const cols = 'ticker,ai_status,blocked,alert_sent,outcome,return_pct,mfe_pct,mae_pct,bars_held,created_at,lag_z,' +
+    'rvol,vwap_dist_pct,qqq_vwap_dist_pct,minutes_since_open,gap_pct,day_return_pct,atr_pct,cluster_id,cluster_size,peer_z,lead_score';
+  const url = SUPABASE_URL + '/rest/v1/signal_logs?select=' + cols + '&outcome=in.(TP,SL,TIMEOUT)&order=created_at.desc&limit=' + PERF_LIMIT;
+  const { json } = await fetchJsonTimeout(url, { method: 'GET', headers: await authHeaders() });
+  if (!Array.isArray(json)) throw new Error('Respons kinerja bukan array');
+  return json.map(normalizeLog).filter((r) => isNum(r.return_pct));
+}
+function mockHistory() {
+  const now = Date.now();
+  const mk = (minAgo, tk, q, s, z, entry, st, why, oc, ret) => normalizeLog({
+    id: tk + minAgo, created_at: new Date(now - minAgo * 60000).toISOString(), ticker: tk, qqq_return: q, stock_return: s, lag_z: z,
+    entry_price: entry, stop_loss: rnd(entry * 0.9955, 2), take_profit: rnd(entry * 1.0075, 2), ai_status: st, ai_reason: why,
+    blocked: st === 'REJECTED', alert_sent: st !== 'REJECTED', outcome: oc, return_pct: ret,
+    mfe_pct: oc === 'OPEN' ? 0.21 : Math.max(ret, 0) + 0.1, mae_pct: oc === 'OPEN' ? -0.12 : Math.min(ret, 0) - 0.1, bars_held: 5
+  });
+  return { rows: [
+    mk(12, 'NVDA', 0.31, 0.10, -1.6, 145.2, 'PASSED', 'Tidak ada berita buruk', 'OPEN', null),
+    mk(47, 'META', 0.28, 0.06, -1.3, 585.1, 'REJECTED', 'Investigasi regulator terhadap penjualan', 'SL', -0.45),
+    mk(95, 'AMD', 0.35, 0.02, -2.1, 162.45, 'NO_NEWS', 'Tidak ada berita 24 jam terakhir', 'TP', 0.75),
+    mk(140, 'TSM', 0.26, 0.0, -1.2, 188.3, 'BYPASSED', 'Guardrail gagal: timeout', 'TIMEOUT', 0.18),
+    mk(210, 'AMZN', 0.24, -0.05, -1.5, 196.4, 'PASSED', 'Tidak ada berita buruk', 'TP', 0.62)
+  ], total: 5 };
+}
+function mockPerformance() {
+  const tickers = ['NVDA', 'AMD', 'TSM', 'META', 'MSFT', 'AMZN', 'SMCI'];
+  const statuses = ['PASSED', 'PASSED', 'PASSED', 'NO_NEWS', 'BYPASSED', 'REJECTED'];
+  const rows = [];
+  for (let i = 0; i < 48; i++) {
+    const st = statuses[Math.floor(Math.random() * statuses.length)];
+    const d = Math.random();
+    const oc = d < 0.44 ? 'TP' : (d < 0.78 ? 'SL' : 'TIMEOUT');
+    const ret = oc === 'TP' ? rand(0.5, 1.0) : (oc === 'SL' ? -rand(0.3, 0.6) : rand(-0.3, 0.4));
+    rows.push(normalizeLog({ ticker: tickers[i % tickers.length], ai_status: st, blocked: st === 'REJECTED', alert_sent: st !== 'REJECTED',
+      outcome: oc, return_pct: rnd(ret, 3), mfe_pct: rnd(Math.max(ret, 0) + rand(0, 0.3), 3), mae_pct: rnd(Math.min(ret, 0) - rand(0, 0.3), 3),
+      bars_held: Math.round(rand(1, 12)), created_at: new Date(Date.now() - i * 3600000).toISOString(),
+      lag_z: rnd(rand(-2.8, -1.0), 2), rvol: rnd(rand(0.4, 2.8), 2), vwap_dist_pct: rnd(rand(-0.5, 0.5), 3), qqq_vwap_dist_pct: rnd(rand(-0.4, 0.4), 3),
+      minutes_since_open: Math.round(rand(5, 385)), gap_pct: i % 7 === 0 ? null : rnd(rand(-1.5, 1.5), 3), day_return_pct: rnd(rand(-1, 1.5), 3), atr_pct: rnd(rand(0.12, 0.7), 3),
+      peer_z: i % 5 === 0 ? null : rnd(rand(-2.5, 1.0), 2), lead_score: rnd(rand(-0.2, 0.2), 3) }));
+  }
+  return rows;
+}
+
+/* =====================================================================
+ *  ALERT, TOAST, SUARA
+ * ===================================================================== */
+function showAlert(msg, type = 'danger') {
+  $('alertBox').innerHTML = '<div class="hud-alert ' + type + '" role="alert"><span>' + escapeHtml(msg) + '</span>' +
+    '<button type="button" aria-label="Tutup" onclick="this.parentNode.remove()">×</button></div>';
+}
+function clearAlert() { $('alertBox').innerHTML = ''; }
+let toastTimer = null;
+function showToast(title, text) {
+  const t = $('toast');
+  t.innerHTML = '<b>' + escapeHtml(title) + '</b><span>' + escapeHtml(text) + '</span>';
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), 3200);
+}
+let audioCtx = null;
+function beep(test = false) {
+  if (!$('sfx').checked) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = audioCtx || new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    (test ? [880] : [880, 1320, 1760]).forEach((f, i) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain(), s = t0 + i * 0.11;
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, s);
+      g.gain.exponentialRampToValueAtTime(0.12, s + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, s + 0.1);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(s); o.stop(s + 0.12);
+    });
+  } catch (e) { /* abaikan */ }
+}
+
+/* =====================================================================
+ *  REFRESH
+ * ===================================================================== */
+function setLoading(on) {
+  state.loading = on;
+  $('btnRefresh').disabled = on;
+  $('btnLabel').textContent = on ? 'Memindai…' : 'Refresh';
+}
+// Data simulasi HANYA dipakai saat URL belum diisi atau DEMO_MODE. Jika refresh live gagal, dashboard
+// tetap menampilkan snapshot live terakhir dengan tanda GAGAL, atau kosong jika belum pernah berhasil.
+async function refreshSnapshot() {
+  if (!isUrlConfigured()) {
+    state.data = fallbackMockData(); state.mode = 'simulation'; state.liveError = null;
+    showAlert(DEMO_MODE ? 'Mode DEMO: data di bawah adalah simulasi acak, bukan data pasar.' : 'URL Supabase belum diisi. Menampilkan data SIMULASI agar tampilan dapat diuji.', 'info');
+    return true;
+  }
+  try {
+    state.data = await fetchLiveDataFromSupabase(); state.mode = 'live'; state.liveError = null; clearAlert();
+    return true;
+  } catch (e) {
+    state.liveError = e.message;
+    if (authEnabled() && e.status === 401) {
+      // token tidak bisa diperbarui lagi: kembali ke layar login
+      showAlert('Sesi login berakhir. Silakan masuk lagi.');
+      setTimeout(signOutAndReload, 1500);
+      return false;
+    }
+    if (authEnabled() && e.status === 403) {
+      state.data = null; state.mode = 'none';
+      showAlert(e.message.replace(/^HTTP 403: /, '') + ' Minta pemilik dashboard menambahkan email Anda, atau keluar dan masuk dengan email lain.');
+      return false;
+    }
+    if (state.mode === 'live' && state.data) {
+      showAlert('Gagal refresh data live (' + e.message + '). Yang tampil adalah snapshot terakhir dari ' + fmtWibTime(new Date(state.data.generated_at)) + ' WIB, jangan dipakai sebagai sinyal terkini.');
+    } else {
+      state.data = null; state.mode = 'none';
+      showAlert('Gagal mengambil data live (' + e.message + '). Belum ada data yang bisa ditampilkan.');
+    }
+    return false;
+  }
+}
+async function refreshHistory() {
+  if (!isDbConfigured()) {
+    const m = mockHistory();
+    state.history = { rows: m.rows, total: m.total, mode: 'simulation', error: null };
+    state.perf = { rows: mockPerformance(), mode: 'simulation', error: null };
+    return;
+  }
+  const [h, p] = await Promise.allSettled([fetchSignalHistory(), fetchPerformance()]);
+  state.history = h.status === 'fulfilled' ? { rows: h.value.rows, total: h.value.total, mode: 'live', error: null } : { rows: [], total: null, mode: 'live', error: h.reason.message };
+  state.perf = p.status === 'fulfilled' ? { rows: p.value, mode: 'live', error: null } : { rows: [], mode: 'live', error: p.reason.message };
+}
+async function refreshData() {
+  if (state.loading || !state.appStarted) return;
+  setLoading(true);
+  try {
+    const [fresh] = await Promise.all([refreshSnapshot(), refreshHistory()]);
+    state.lastRefreshAt = Date.now();
+    renderAll();
+    if (fresh && state.data) {
+      if (state.booting) state.pendingAcquire = true; else detectAcquisitions();
+    }
+  } finally {
+    setLoading(false);
+  }
+}
+
+// Sinyal BUY yang baru muncul sejak refresh sebelumnya -> animasi TARGET ACQUIRED + toast (+ suara jika aktif)
+function detectAcquisitions() {
+  const rows = state.rows;
+  const prev = state.prevSignals || {};
+  const newly = rows.filter((r) => r.signal === 'BUY_LAGGING' && prev[r.ticker] !== 'BUY_LAGGING');
+  state.prevSignals = Object.fromEntries(rows.map((r) => [r.ticker, r.signal]));
+  if (!newly.length) return;
+  const now = performance.now();
+  newly.forEach((r) => { state.acquire[r.ticker] = now; });
+  showToast('TARGET ACQUIRED', newly.map((r) => r.ticker + ' · z ' + fmtSigned(r.lag_z)).join('   '));
+  beep();
+  if (REDUCED && network) network.redraw();
+}
+
+/* =====================================================================
+ *  STATUS BAR
+ * ===================================================================== */
+function setPill(id, cls, text) { const p = $(id); p.className = 'pill ' + cls; p.lastElementChild.textContent = text; }
+function updateStatusBar() {
+  const now = new Date();
+  const market = getMarketStatus(now);
+  $('clkNy').textContent = market.nyTime;
+  $('clkWib').textContent = fmtWibTime(now);
+  setPill('pillMarket', market.open ? 'ok' : 'dim', market.holiday ? 'Libur bursa' : market.open ? (market.early ? 'Buka · tutup 13:00' : 'Pasar buka') : 'Pasar tutup');
+  const tg = state.data && state.data.telegram;
+  if (state.mode !== 'live' || !tg) setPill('pillTg', 'dim', 'Telegram');
+  else setPill('pillTg', tg.configured ? 'ok' : 'bad', tg.configured ? 'Telegram' : 'Telegram belum diset');
+  if (!state.data) {
+    setPill('pillLive', state.mode === 'none' ? 'bad' : 'dim', state.mode === 'none' ? 'Tidak ada data' : 'Memuat');
+    setPill('pillAge', 'dim', 'DATA -');
+    return;
+  }
+  const gen = new Date(state.data.generated_at);
+  const ageMs = now.getTime() - gen.getTime();
+  const ageSec = Math.max(0, Math.round(ageMs / 1000));
+  const ageTxt = ageSec < 60 ? ageSec + 'S' : ageSec < 3600 ? Math.round(ageSec / 60) + 'M' : Math.round(ageSec / 3600) + 'J';
+  if (state.mode === 'live') {
+    const stale = market.open && (ageMs > STALE_AFTER_MS || state.data.fresh === false);
+    if (state.liveError) setPill('pillLive', 'bad', 'Gagal refresh');
+    else if (stale) setPill('pillLive', 'bad', 'Data basi');
+    else setPill('pillLive', 'ok', 'Live');
+  } else {
+    setPill('pillLive', 'sim', DEMO_MODE ? 'Demo' : 'Simulasi');
+  }
+  setPill('pillAge', 'dim', 'DATA ' + ageTxt + ' · BAR ' + fmtWibTime(new Date(state.data.timestamp), false));
+}
+
+/* =====================================================================
+ *  RADAR (vis-network + lapisan kanvas)
+ * ===================================================================== */
+const RADAR_BASE = 80, RADAR_SPAN = 420, RADAR_MIN_ABS_R = 0.3;
+const radiusFor = (absR) => RADAR_BASE + (1 - clamp(absR, RADAR_MIN_ABS_R, 1)) * RADAR_SPAN;
+const RING_LEVELS = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4];
+
+function initNetwork() {
+  nodesDS = new vis.DataSet();
+  edgesDS = new vis.DataSet();
+  network = new vis.Network($('graph'), { nodes: nodesDS, edges: edgesDS }, {
+    physics: false,
+    interaction: { hover: !COARSE, dragNodes: false, zoomView: !COARSE, dragView: !COARSE, tooltipDelay: 60, selectConnectedEdges: false },
+    nodes: { shape: 'dot' },
+    edges: { smooth: false, selectionWidth: 0, hoverWidth: 0 }
+  });
+  network.on('click', (params) => { if (params.nodes.length && params.nodes[0] !== BENCHMARK) selectTicker(params.nodes[0]); });
+  network.on('zoom', () => { userMovedView = true; });
+  network.on('dragEnd', (p) => { if (!p.nodes.length) userMovedView = true; });
+  network.on('beforeDrawing', drawRadarBackground);
+  network.on('afterDrawing', drawRadarOverlay);
+  window.addEventListener('resize', () => { if (state.data && !userMovedView) renderGraph(state.rows); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => network.redraw());
+  if (!REDUCED) startRadarLoop();
+}
+
+let lastFrame = 0;
+function startRadarLoop() {
+  const loop = (ts) => {
+    requestAnimationFrame(loop);
+    if (document.hidden || ts - lastFrame < 33) return;   // ~30 fps, berhenti saat tab tersembunyi
+    lastFrame = ts;
+    if (network) network.redraw();
+  };
+  requestAnimationFrame(loop);
+}
+
+// Skala agar semua node + cincin ambang muat. Ukuran node, huruf, dan garis overlay dibagi skala ini
+// sehingga tampil konstan dalam piksel, tidak mengecil saat ada saham berkorelasi rendah yang jauh dari inti.
+function radarScale(rows) {
+  const el = $('graph');
+  const w = el.clientWidth || 600, h = el.clientHeight || 400;
+  const radii = rows.map((s) => radiusFor(Math.abs(s.correlation)));
+  const maxR = Math.max(radiusFor(state.cfg.corrThreshold), ...radii, 160);
+  const pad = 44;   // ruang piksel untuk label di tepi
+  return Math.max(0.05, (Math.min(w, h) / 2 - pad) / maxR);
+}
+function fitRadar() {
+  if (!network || userMovedView) return;
+  network.moveTo({ position: { x: 0, y: 0 }, scale: radarScale(state.rows), animation: false });
+}
+
+function drawRadarBackground(ctx) {
+  const t = performance.now() / 1000;
+  const k = 1 / network.getScale();          // 1 piksel layar dalam satuan kanvas
+  const outer = radiusFor(RADAR_MIN_ABS_R) + 14 * k;
+  ctx.save();
+  // garis silang & cincin korelasi
+  ctx.strokeStyle = 'rgba(63,224,255,0.08)'; ctx.lineWidth = k;
+  ctx.beginPath(); ctx.moveTo(-outer, 0); ctx.lineTo(outer, 0); ctx.moveTo(0, -outer); ctx.lineTo(0, outer); ctx.stroke();
+  ctx.font = (10.5 * k).toFixed(2) + 'px ' + CANVAS_MONO; ctx.textBaseline = 'middle';
+  RING_LEVELS.forEach((r) => {
+    const R = radiusFor(r);
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(63,224,255,0.16)'; ctx.stroke();
+    ctx.fillStyle = 'rgba(111,147,166,0.85)';
+    ctx.fillText('r ' + r.toFixed(1), R * Math.cos(-0.62) + 5 * k, R * Math.sin(-0.62));
+  });
+  // cincin ambang korelasi (emas putus-putus)
+  const thR = radiusFor(state.cfg.corrThreshold);
+  ctx.setLineDash([6 * k, 6 * k]); ctx.lineWidth = 1.5 * k; ctx.strokeStyle = 'rgba(232,193,112,0.65)';
+  ctx.beginPath(); ctx.arc(0, 0, thR, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = COLORS.gold; ctx.textAlign = 'center';
+  ctx.fillText('AMBANG r ≥ ' + state.cfg.corrThreshold.toFixed(2), 0, thR + 12 * k); ctx.textAlign = 'start';
+  // tanda derajat di tepi luar
+  ctx.strokeStyle = 'rgba(63,224,255,0.35)';
+  for (let i = 0; i < 72; i++) {
+    const a = i / 72 * Math.PI * 2, len = (i % 6 === 0 ? 10 : 4) * k;
+    ctx.beginPath(); ctx.moveTo(Math.cos(a) * outer, Math.sin(a) * outer); ctx.lineTo(Math.cos(a) * (outer - len), Math.sin(a) * (outer - len)); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(0, 0, outer, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(63,224,255,0.25)'; ctx.lineWidth = k; ctx.stroke();
+  // sapuan radar
+  if (!REDUCED) {
+    const ang = (t * 0.7) % (Math.PI * 2), step = 0.03;
+    for (let k = 0; k < 26; k++) {
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, outer, ang - (k + 1) * step, ang - k * step); ctx.closePath();
+      ctx.fillStyle = 'rgba(63,224,255,' + (0.16 * (1 - k / 26)).toFixed(3) + ')'; ctx.fill();
+    }
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ang) * outer, Math.sin(ang) * outer);
+    ctx.strokeStyle = 'rgba(63,224,255,0.55)'; ctx.lineWidth = 1.5 * k; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBrackets(ctx, x, y, half, len, color, lw) {
+  ctx.strokeStyle = color; ctx.lineWidth = lw;
+  [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
+    const cx = x + sx * half, cy = y + sy * half;
+    ctx.beginPath(); ctx.moveTo(cx, cy - sy * len); ctx.lineTo(cx, cy); ctx.lineTo(cx - sx * len, cy); ctx.stroke();
+  });
+}
+
+function drawRadarOverlay(ctx) {
+  const now = performance.now(), t = now / 1000;
+  const k = 1 / network.getScale();
+  ctx.save();
+  // cincin bersegmen di sekitar inti QQQ
+  const rot = REDUCED ? 0 : t * 0.9;
+  ctx.lineWidth = 2.5 * k; ctx.strokeStyle = 'rgba(63,224,255,0.85)';
+  for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.arc(0, 0, 30 * k, rot + i * Math.PI / 3, rot + i * Math.PI / 3 + 0.7); ctx.stroke(); }
+  ctx.lineWidth = 1.5 * k; ctx.strokeStyle = 'rgba(232,193,112,0.85)';
+  for (let i = 0; i < 12; i++) { ctx.beginPath(); ctx.arc(0, 0, 38 * k, -rot * 0.6 + i * Math.PI / 6, -rot * 0.6 + i * Math.PI / 6 + 0.18); ctx.stroke(); }
+  // cincin & label klaster
+  if (state.showNet) {
+    const byCl = {};
+    Object.keys(state.positions).forEach((tk) => {
+      const p = state.positions[tk];
+      if (!p.cluster) return;
+      const col = clusterColor(p.cluster); if (!col) return;
+      ctx.beginPath(); ctx.setLineDash([2.5 * k, 3 * k]); ctx.arc(p.x, p.y, 13 * k, 0, Math.PI * 2);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.4 * k; ctx.stroke(); ctx.setLineDash([]);
+      (byCl[p.cluster] = byCl[p.cluster] || []).push(p);
+    });
+    ctx.font = '700 ' + (11 * k).toFixed(2) + 'px ' + CANVAS_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    Object.keys(byCl).forEach((id) => {
+      const ps = byCl[id];
+      const sx = ps.reduce((a, p) => a + Math.cos(p.angle), 0), sy = ps.reduce((a, p) => a + Math.sin(p.angle), 0);
+      const ang = Math.atan2(sy, sx), Rm = Math.max(...ps.map((p) => p.R)) + 50 * k;
+      ctx.fillStyle = clusterColor(id);
+      ctx.fillText(id, Math.cos(ang) * Rm, Math.sin(ang) * Rm);
+    });
+    ctx.textAlign = 'start';
+  }
+  // denyut node BUY
+  state.rows.forEach((s) => {
+    if (s.signal !== 'BUY_LAGGING') return;
+    const p = state.positions[s.ticker]; if (!p) return;
+    const ph = REDUCED ? 0.4 : (t % 1.6) / 1.6;
+    ctx.beginPath(); ctx.arc(p.x, p.y, (14 + ph * 22) * k, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,182,39,' + (0.85 * (1 - ph)).toFixed(3) + ')'; ctx.lineWidth = 2 * k; ctx.stroke();
+  });
+  // TARGET ACQUIRED (1,8 detik setelah BUY baru muncul)
+  Object.keys(state.acquire).forEach((tk) => {
+    const age = now - state.acquire[tk];
+    const p = state.positions[tk];
+    if (age > 1800 || !p) { if (age > 1800) delete state.acquire[tk]; return; }
+    const q = age / 1800;
+    const half = (20 + (1 - Math.min(1, q * 2.5)) * 36) * k;
+    drawBrackets(ctx, p.x, p.y, half, 9 * k, 'rgba(255,182,39,' + (1 - q * 0.6).toFixed(3) + ')', 2.5 * k);
+    if (Math.floor(age / 140) % 2 === 0 || q > 0.5) {
+      ctx.font = '700 ' + (12 * k).toFixed(2) + 'px ' + CANVAS_FONT; ctx.textAlign = 'center'; ctx.fillStyle = COLORS.buy;
+      ctx.fillText('TARGET ACQUIRED', p.x, p.y - half - 10 * k); ctx.textAlign = 'start';
+    }
+  });
+  // kunci target pada node terpilih
+  const sp = state.selected && state.positions[state.selected];
+  if (sp) {
+    const e = REDUCED ? 1 : Math.min(1, (now - state.lockStart) / 420);
+    const ease = 1 - Math.pow(1 - e, 3);
+    const half = (18 + (1 - ease) * 30) * k;
+    drawBrackets(ctx, sp.x, sp.y, half, 8 * k, COLORS.gold, 2 * k);
+    ctx.beginPath(); ctx.setLineDash([3 * k, 5 * k]); ctx.arc(sp.x, sp.y, half + 7 * k, rot, rot + Math.PI * 2);
+    ctx.strokeStyle = 'rgba(232,193,112,0.45)'; ctx.lineWidth = k; ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+function tipEl(title, lines) {
+  const d = document.createElement('div');
+  const h = document.createElement('div'); h.className = 'tip-t'; h.textContent = title; d.appendChild(h);
+  lines.forEach((l) => { const x = document.createElement('div'); x.textContent = l; d.appendChild(x); });
+  return d;
+}
+
+function renderGraph(rows) {
+  const bench = state.data.benchmark;
+  const n = rows.length;
+  const nodes = [], edges = [];
+  state.positions = {};
+  const k = 1 / (userMovedView ? network.getScale() : radarScale(rows));
+  nodes.push({
+    id: BENCHMARK, label: bench.ticker + '\n' + fmtPct(bench.return_15m), x: 0, y: 0, fixed: true, size: 17 * k,
+    title: tipEl(bench.ticker + ' · BENCHMARK', ['Return 15m ' + fmtPct(bench.return_15m), 'Harga ' + fmtPrice(bench.price)]),
+    color: { background: '#7eecff', border: '#e6fbff', highlight: { background: '#7eecff', border: '#fff' }, hover: { background: '#7eecff', border: '#fff' } },
+    borderWidth: 2, shadow: { enabled: true, color: 'rgba(63,224,255,0.9)', size: 30, x: 0, y: 0 },
+    font: { color: COLORS.gold, size: 14 * k, face: CANVAS_FONT, strokeWidth: 4 * k, strokeColor: COLORS.bg, vadjust: 24 * k }
+  });
+  // Urutan di lingkaran: anggota klaster yang sama berdampingan, dengan celah kecil antar-klaster.
+  const net = state.data.network || { clusters: [], edges: [] };
+  const cIdx = (s) => { const i = net.clusters.findIndex((c) => c.id === s.cluster); return i < 0 ? 99 : i; };
+  const layout = rows.slice().sort((a, b) => cIdx(a) - cIdx(b) || a.ticker.localeCompare(b.ticker));
+  const slots = [];
+  let slot = 0;
+  layout.forEach((s, i) => { if (i > 0 && cIdx(s) !== cIdx(layout[i - 1])) slot += 0.6; slots.push(slot); slot += 1; });
+  const totalSlots = Math.max(slot, 1);
+  layout.forEach((s, i) => {
+    const meta = SIGNALS[s.signal];
+    const angle = (2 * Math.PI * slots[i]) / totalSlots - Math.PI / 2;
+    const absR = Math.abs(s.correlation);
+    const R = radiusFor(absR);
+    const x = Math.cos(angle) * R, y = Math.sin(angle) * R;
+    const isBuy = s.signal === 'BUY_LAGGING';
+    state.positions[s.ticker] = { x, y, cluster: s.cluster, angle, R };
+    nodes.push({
+      id: s.ticker, label: s.ticker + '\n' + fmtPct(s.return_15m), x, y, fixed: true, size: (isBuy ? 10 : 7.5) * k,
+      title: tipEl(s.ticker + ' · ' + meta.label, ['r ' + s.correlation.toFixed(2) + '   β ' + fmtNum(s.beta), 'Ret 15m ' + fmtPct(s.return_15m) + '  (eksp ' + fmtPct(s.expected_return) + ')', 'Lag z ' + fmtSigned(s.lag_z),
+        s.cluster ? 'Klaster ' + s.cluster + ' · z klaster ' + fmtSigned(s.peer_z) : 'Tidak masuk klaster']),
+      color: { background: meta.color, border: 'rgba(255,255,255,0.75)', highlight: { background: meta.color, border: '#fff' }, hover: { background: meta.color, border: '#fff' } },
+      borderWidth: isBuy ? 2.5 : 1.5,
+      shadow: { enabled: true, color: meta.color, size: isBuy ? 26 : 12, x: 0, y: 0 },
+      font: { color: COLORS.text, size: 12.5 * k, face: CANVAS_FONT, strokeWidth: 4 * k, strokeColor: COLORS.bg, vadjust: 2 * k }
+    });
+    edges.push({
+      id: 'e-' + s.ticker, from: BENCHMARK, to: s.ticker, width: (0.8 + absR * 2.6) * k, dashes: s.correlation < 0 ? [5 * k, 6 * k] : false,
+      color: { color: meta.color, highlight: meta.color, hover: meta.color, opacity: s.signal === 'NEUTRAL' ? 0.35 : (state.showNet ? 0.45 : 0.7) }
+    });
+  });
+  // Garis antar-saham (korelasi >= PEER_CORR_MIN). Dalam satu klaster: warna klaster; lintas klaster: abu putus-putus.
+  if (state.showNet) {
+    const present = new Set(rows.map((r) => r.ticker));
+    net.edges.forEach((e) => {
+      if (!present.has(e.a) || !present.has(e.b)) return;
+      const ca = state.positions[e.a].cluster, cb = state.positions[e.b].cluster;
+      const same = ca && ca === cb;
+      const col = same ? clusterColor(ca) : 'rgba(150,175,190,0.55)';
+      edges.push({
+        id: 'p-' + e.a + '-' + e.b, from: e.a, to: e.b, width: Math.max(0.6, (e.r - 0.5) * 7) * k,
+        dashes: same ? false : [3 * k, 5 * k], smooth: { enabled: true, type: 'curvedCW', roundness: 0.18 },
+        color: { color: col, highlight: col, hover: col, opacity: same ? 0.85 : 0.4 },
+        title: tipEl(e.a + ' ↔ ' + e.b, ['r = ' + e.r.toFixed(2), same ? 'Satu klaster (' + ca + ')' : 'Lintas klaster'])
+      });
+    });
+  }
+  nodesDS.clear(); edgesDS.clear(); nodesDS.add(nodes); edgesDS.add(edges);
+  fitRadar();
+  if (REDUCED) network.redraw();
+}
+
+/* =====================================================================
+ *  PAPAN SINYAL
+ * ===================================================================== */
+function levelsOf(s) {
+  const cfg = state.data && state.data.config;
+  const slPct = cfg && isNum(cfg.sl) ? cfg.sl : DEFAULT_SL_PCT;
+  const tpPct = cfg && isNum(cfg.tp) ? cfg.tp : DEFAULT_TP_PCT;
+  if (!isNum(s.price)) return null;
+  return { sl: isNum(s.stop_loss) ? s.stop_loss : s.price * (1 - slPct / 100), tp: isNum(s.take_profit) ? s.take_profit : s.price * (1 + tpPct / 100) };
+}
+function flashCls(tk, key, v) {
+  const prev = state.prevVals[tk] && state.prevVals[tk][key];
+  return (prev !== undefined && prev !== v) ? ' flash' : '';
+}
+function renderSignals(rows) {
+  const counts = { BUY_LAGGING: 0, MOMENTUM: 0, DIVERGENT: 0, AVOID: 0, NEUTRAL: 0 };
+  rows.forEach((s) => counts[s.signal]++);
+  const sel = state.selected;
+  $('signalBody').innerHTML = rows.map((s) => {
+    const meta = SIGNALS[s.signal], lv = levelsOf(s), isBuy = s.signal === 'BUY_LAGGING';
+    const cls = ['click', isBuy ? 'buy' : '', sel === s.ticker ? 'sel' : ''].join(' ');
+    return '<tr class="' + cls + '" data-ticker="' + escapeHtml(s.ticker) + '">' +
+      '<td class="tk">' + escapeHtml(s.ticker) + '</td>' +
+      '<td class="r' + flashCls(s.ticker, 'price', s.price) + '">' + fmtPrice(s.price) + '</td>' +
+      '<td class="r">' + s.correlation.toFixed(2) + '</td>' +
+      '<td class="r">' + fmtNum(s.beta) + '</td>' +
+      '<td class="r ' + pctClass(s.return_15m) + flashCls(s.ticker, 'ret', s.return_15m) + '">' + fmtPct(s.return_15m) + '</td>' +
+      '<td class="r muted">' + fmtPct(s.expected_return) + '</td>' +
+      '<td class="r ' + zClass(s.lag_z, state.cfg) + '">' + fmtSigned(s.lag_z) + '</td>' +
+      '<td>' + clChip(s.cluster) + '</td>' +
+      '<td class="r ' + zClass(s.peer_z, state.cfg) + '">' + fmtSigned(s.peer_z) + '</td>' +
+      '<td class="r muted">' + fmtVolume(s.volume) + '</td>' +
+      '<td><span class="badge b-' + s.signal + '">' + meta.label + '</span></td>' +
+      '<td class="r">' + (isBuy && lv ? '<span class="neg">' + lv.sl.toFixed(2) + '</span> / <span class="pos">' + lv.tp.toFixed(2) + '</span>' : '<span class="muted">-</span>') + '</td></tr>';
+  }).join('') || '<tr class="empty-row"><td colspan="12">Tidak ada saham yang lolos perhitungan pada snapshot ini.</td></tr>';
+
+  $('signalCards').innerHTML = rows.map((s) => {
+    const meta = SIGNALS[s.signal], lv = levelsOf(s), isBuy = s.signal === 'BUY_LAGGING';
+    return '<button type="button" class="card' + (isBuy ? ' buy' : '') + (sel === s.ticker ? ' sel' : '') + '" data-ticker="' + escapeHtml(s.ticker) + '">' +
+      '<div class="card-top"><b>' + escapeHtml(s.ticker) + '</b><span class="badge b-' + s.signal + '">' + meta.label + '</span></div>' +
+      '<div class="card-grid">' +
+        '<span>Harga<b class="' + flashCls(s.ticker, 'price', s.price).trim() + '">' + fmtPrice(s.price) + '</b></span>' +
+        '<span>Ret 15m<b class="' + pctClass(s.return_15m) + '">' + fmtPct(s.return_15m) + '</b></span>' +
+        '<span>Lag z<b class="' + zClass(s.lag_z, state.cfg) + '">' + fmtSigned(s.lag_z) + '</b></span>' +
+        '<span>Klaster · z<b>' + (s.cluster ? escapeHtml(s.cluster) + ' · <span class="' + zClass(s.peer_z, state.cfg) + '">' + fmtSigned(s.peer_z) + '</span>' : 'solo') + '</b></span>' +
+        '<span>r / <span class="nc">β</span><b>' + s.correlation.toFixed(2) + ' / ' + fmtNum(s.beta) + '</b></span>' +
+        '<span>SL / TP<b>' + (isBuy && lv ? lv.sl.toFixed(2) + ' / ' + lv.tp.toFixed(2) : '-') + '</b></span>' +
+      '</div></button>';
+  }).join('') || '<div class="muted">Tidak ada saham yang lolos perhitungan pada snapshot ini.</div>';
+
+  $('signalSummary').innerHTML = Object.keys(counts).map((k) => '<span class="badge b-g b-' + k + '">' + SIGNALS[k].short + ' ' + counts[k] + '</span>').join('');
+  const sk = state.data.skipped;
+  $('skippedNote').innerHTML = sk.length ? 'Dilewati: ' + sk.map((x) => '<b>' + escapeHtml(x.ticker) + '</b> (' + escapeHtml(x.reason) + ')').join(', ') : '';
+  const c = state.data.config, v = (x) => (x === null || x === undefined ? '-' : x);
+  $('serverCfg').textContent = c ? 'SERVER › QQQ > +' + v(c.qqq) + '% · r ≥ ' + v(c.corr) + ' · BUY jika −' + v(c.zDiv) + ' < z ≤ −' + v(c.zLag) +
+    ' · SL ' + v(c.slAtr) + '×ATR / TP ' + v(c.tpAtr) + '×ATR · batas waktu ' + v(c.holdMax) + ' mnt' : '';
+
+  state.prevVals = Object.fromEntries(rows.map((s) => [s.ticker, { price: s.price, ret: s.return_15m }]));
+}
+
+/* =====================================================================
+ *  TARGET LOCK
+ * ===================================================================== */
+// Grafik jejak ~2 jam: saham vs QQQ, ekspektasi β × QQQ, dan keranjang klaster (rata-rata anggota lain).
+function sparkHtml(s) {
+  const b = state.data.benchmark;
+  const q = b.spark, sp = s.spark;
+  if (!Array.isArray(q) || !Array.isArray(sp) || q.length < 4 || sp.length !== q.length) {
+    return '<div class="spark-empty">Grafik jejak harga muncul setelah sesi hari ini punya minimal 4 bar (sekitar 20 menit setelah pembukaan).</div>';
+  }
+  const n = q.length, meta = SIGNALS[s.signal];
+  const beta = isNum(s.beta) ? s.beta : 1;
+  const lines = [
+    { label: 'β × QQQ', color: '#9fb7c4', vals: q.map((v) => (isNum(v) ? v * beta : null)), dash: '4 4', cls: 'dash', w: 1.5 },
+    { label: 'QQQ', color: COLORS.cyan, vals: q, w: 1.5 }
+  ];
+  const cl = s.cluster && state.data.network ? state.data.network.clusters.find((c) => c.id === s.cluster) : null;
+  if (cl) {
+    const peers = state.data.stocks.filter((o) => cl.members.includes(o.ticker) && o.ticker !== s.ticker && Array.isArray(o.spark) && o.spark.length === n);
+    if (peers.length) {
+      const basket = q.map((_, i) => { const xs = peers.map((o) => o.spark[i]).filter(isNum); return xs.length ? xs.reduce((a, c) => a + c, 0) / xs.length : null; });
+      lines.push({ label: 'Klaster ' + cl.id, color: clusterColor(cl.id) || COLORS.muted, vals: basket, dash: '1.5 3.5', cls: 'dot', w: 2 });
+    }
+  }
+  lines.push({ label: s.ticker, color: meta.color === COLORS.neu ? COLORS.text : meta.color, vals: sp, w: 2.6 });
+  const all = lines.flatMap((l) => l.vals).filter(isNum).concat([0]);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const pad = Math.max(0.05, (hi - lo) * 0.12); lo -= pad; hi += pad;
+  const W = 300, H = 120;
+  const x = (i) => (i / (n - 1)) * W;
+  const y = (v) => H - ((v - lo) / (hi - lo)) * H;
+  const path = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (!isNum(v)) { pen = false; return; } d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1) + ' '; pen = true; }); return d; };
+  const last = (vals) => { for (let i = vals.length - 1; i >= 0; i--) if (isNum(vals[i])) return vals[i]; return null; };
+  const svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-label="Jejak harga ' + escapeHtml(s.ticker) + ' dibanding QQQ">' +
+    '<rect x="' + x(n - 4).toFixed(1) + '" y="0" width="' + (x(n - 1) - x(n - 4)).toFixed(1) + '" height="' + H + '" fill="rgba(255,182,39,0.08)"/>' +
+    '<line x1="' + x(n - 4).toFixed(1) + '" x2="' + x(n - 4).toFixed(1) + '" y1="0" y2="' + H + '" stroke="rgba(255,182,39,0.35)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>' +
+    '<line x1="0" x2="' + W + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '" stroke="rgba(111,147,166,0.55)" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>' +
+    lines.map((l) => '<path d="' + path(l.vals) + '" fill="none" stroke="' + l.color + '" stroke-width="' + l.w + '"' + (l.dash ? ' stroke-dasharray="' + l.dash + '"' : '') +
+      ' stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"' + (l.label === s.ticker ? ' style="filter:drop-shadow(0 0 3px ' + l.color + ')"' : '') + '/>').join('') +
+    '</svg>';
+  const start = b.spark_start ? new Date(b.spark_start) : null;
+  const end = start ? new Date(start.getTime() + (n - 1) * 300000) : null;
+  return '<div class="spark">' +
+    '<div class="spark-head"><span class="label">Jejak harga · sesi hari ini</span><span class="calib-hint">' + n + ' bar · return kumulatif sejak awal jendela</span></div>' +
+    '<div class="spark-box">' + svg +
+      '<span class="spark-y top">' + fmtPct(hi, 2) + '</span><span class="spark-y bot">' + fmtPct(lo, 2) + '</span><span class="spark-15">15M</span></div>' +
+    (start ? '<div class="spark-x"><span>' + fmtWibTime(start, false) + ' WIB</span><span>' + fmtWibTime(end, false) + ' WIB</span></div>' : '') +
+    '<div class="spark-legend">' + lines.slice().reverse().map((l) => '<span><i class="' + (l.cls || '') + '" style="--lc:' + l.color + '"></i>' + escapeHtml(l.label) +
+      ' <b class="' + pctClass(last(l.vals)) + '">' + fmtPct(last(l.vals)) + '</b></span>').join('') + '</div>' +
+  '</div>';
+}
+function lockNetwork(s) {
+  const net = state.data.network;
+  const cl = s.cluster && net ? net.clusters.find((c) => c.id === s.cluster) : null;
+  const peers = cl ? cl.members.filter((m) => m !== s.ticker).join(', ') : '';
+  return '<div><div class="label" style="margin-bottom:6px">Jaringan <span class="nc">· lag terhadap klaster dicatat, belum jadi filter</span></div>' +
+    '<div class="statgrid">' +
+      '<div class="stat"><span class="label">Klaster</span><b>' + clChip(s.cluster) + '</b><small>' + (peers ? 'dengan ' + escapeHtml(peers) : 'korelasi antar-saham rendah') + '</small></div>' +
+      '<div class="stat"><span class="label">Keranjang 15m</span><b class="' + pctClass(s.peer_return_15m) + '">' + fmtPct(s.peer_return_15m) + '</b><small>rata² anggota lain</small></div>' +
+      '<div class="stat"><span class="label">z klaster</span><b class="' + zClass(s.peer_z, state.cfg) + '">' + fmtSigned(s.peer_z) + '</b><small><span class="nc">β</span> klaster ' + fmtNum(s.peer_beta) + '</small></div>' +
+      '<div class="stat"><span class="label">Centrality</span><b>' + fmtNum(s.centrality) + '</b><small>rata² |r| ke saham lain</small></div>' +
+      '<div class="stat"><span class="label">Lead score</span><b class="' + pctClass(s.lead_score) + '">' + fmtSigned(s.lead_score, 3) + '</b><small>' + leadText(s.lead_score) + '</small></div>' +
+      '<div class="stat"><span class="label">z vs QQQ</span><b class="' + zClass(s.lag_z, state.cfg) + '">' + fmtSigned(s.lag_z) + '</b><small>pembanding</small></div>' +
+    '</div></div>';
+}
+function renderLock(rows, animate) {
+  const panel = $('detailPanel');
+  const s = rows.find((r) => r.ticker === state.selected);
+  if (!s) { panel.innerHTML = '<p class="lock-empty">Pilih node di radar atau saham di papan sinyal.</p>'; return; }
+  const meta = SIGNALS[s.signal], bench = state.data.benchmark, cfg = state.cfg;
+  const ZMIN = -5, ZMAX = 3, zd = effZDiv(cfg);
+  const pos = (z) => (clamp(z, ZMIN, ZMAX) - ZMIN) / (ZMAX - ZMIN) * 100;
+  const pD = pos(-zd), pB = pos(-cfg.zLag);
+  const ticks = [-4, -3, -2, -1, 0, 1, 2].map((v) => '<span class="tick" style="left:' + pos(v) + '%">' + v + '</span>').join('');
+  const zMark = isNum(s.lag_z) ? '<div class="zmark" style="left:' + pos(s.lag_z) + '%"><span>z ' + fmtSigned(s.lag_z) + '</span></div>' : '';
+  const qqqOk = bench.return_15m > cfg.qqqThreshold && s.correlation >= cfg.corrThreshold;
+  const lv = levelsOf(s);
+  let ladder = '';
+  if (lv) {
+    const span = lv.tp - lv.sl || 1;
+    const ePos = clamp((lv.tp - s.price) / span * 100, 0, 100);
+    const slPct = (lv.sl / s.price - 1) * 100, tpPct = (lv.tp / s.price - 1) * 100;
+    ladder =
+      '<div class="lock-levels">' +
+        '<div class="ladder"><div class="ladder-track"></div>' +
+          '<div class="rung tp" style="top:0%"><em>TP</em>' + lv.tp.toFixed(2) + '</div>' +
+          '<div class="rung en" style="top:' + ePos + '%"><em>IN</em>' + s.price.toFixed(2) + '</div>' +
+          '<div class="rung sl" style="top:100%"><em>SL</em>' + lv.sl.toFixed(2) + '</div>' +
+        '</div>' +
+        '<div class="levels-info">' +
+          '<div class="stat"><span class="label">Take-profit</span><b class="pos">' + fmtPct(tpPct) + '</b></div>' +
+          '<div class="stat"><span class="label">Stop-loss</span><b class="neg">' + fmtPct(slPct) + '</b></div>' +
+          '<div class="stat"><span class="label">Rasio R:R</span><b>1 : ' + (tpPct / Math.abs(slPct)).toFixed(1) + '</b></div>' +
+          '<div class="stat"><span class="label">ATR 5m</span><b>' + fmtNum(s.atr) + '</b><small>' + (s.sl_method === 'ATR' ? 'basis ATR' : s.sl_method === 'PCT' ? 'basis persen' : '') + '</small></div>' +
+        '</div>' +
+      '</div>';
+  }
+  panel.innerHTML =
+    '<div class="' + (animate ? 'lock-anim' : '') + '" style="display:grid;gap:14px">' +
+      '<div class="lock-head"><div><div class="lock-ticker">' + escapeHtml(s.ticker) + '</div>' +
+        '<div class="lock-sub">' + fmtPrice(s.price) + ' · VOL 15M ' + fmtVolume(s.volume) + '</div></div>' +
+        '<span class="badge b-' + s.signal + '">' + meta.label + '</span></div>' +
+      '<div><div class="label">Lag z <span class="nc">(disesuaikan β)</span></div>' +
+        '<div class="zgauge">' +
+          '<div class="zone z-d" style="left:0;width:' + pD + '%"></div>' +
+          '<div class="zone z-b" style="left:' + pD + '%;width:' + (pB - pD) + '%"></div>' +
+          '<div class="zone z-m" style="left:' + pB + '%;right:0"></div>' + ticks + zMark +
+        '</div>' +
+        '<div class="zlegend"><span style="left:' + (pD / 2) + '%;color:var(--div)">DIVERGENT</span><span style="left:' + ((pD + pB) / 2) + '%;color:var(--buy)">BUY</span>' +
+          '<span style="left:' + ((pB + 100) / 2) + '%;color:var(--mom)">MOMENTUM</span></div>' +
+        (qqqOk ? '' : '<div class="znote">Zona z hanya berlaku saat QQQ naik &gt; +' + cfg.qqqThreshold.toFixed(2) + '% dan r ≥ ' + cfg.corrThreshold.toFixed(2) + '.</div>') +
+      '</div>' +
+      sparkHtml(s) +
+      '<div class="statgrid">' +
+        '<div class="stat"><span class="label">Korelasi r</span><b>' + s.correlation.toFixed(3) + '</b><small>' + (isNum(s.corr_samples) ? 'n=' + s.corr_samples : '') + '</small></div>' +
+        '<div class="stat"><span class="label">Beta <span class="nc">β</span></span><b>' + fmtNum(s.beta) + '</b></div>' +
+        '<div class="stat"><span class="label"><span class="nc">σ</span> 15m</span><b>' + (isNum(s.resid_sigma_15m) ? s.resid_sigma_15m.toFixed(2) + '%' : '-') + '</b></div>' +
+        '<div class="stat"><span class="label">Ret 15m</span><b class="' + pctClass(s.return_15m) + '">' + fmtPct(s.return_15m) + '</b></div>' +
+        '<div class="stat"><span class="label">Ekspektasi</span><b class="' + pctClass(s.expected_return) + '">' + fmtPct(s.expected_return) + '</b><small><span class="nc">β</span> × QQQ ' + fmtPct(bench.return_15m) + '</small></div>' +
+        '<div class="stat"><span class="label">Selisih</span><b class="' + pctClass(s.lag_gap) + '">' + fmtPct(s.lag_gap) + '</b></div>' +
+      '</div>' +
+      '<div><div class="label" style="margin-bottom:6px">Konteks <span class="nc">· dicatat, belum jadi filter</span></div><div class="statgrid">' +
+        '<div class="stat"><span class="label">RVOL</span><b>' + (isNum(s.rvol) ? s.rvol.toFixed(2) + '×' : '-') + '</b><small>vs 24 bar sblm</small></div>' +
+        '<div class="stat"><span class="label">vs VWAP</span><b class="' + pctClass(s.vwap_dist_pct) + '">' + fmtPct(s.vwap_dist_pct) + '</b></div>' +
+        '<div class="stat"><span class="label">QQQ vs VWAP</span><b class="' + pctClass(bench.vwap_dist_pct) + '">' + fmtPct(bench.vwap_dist_pct) + '</b></div>' +
+        '<div class="stat"><span class="label">Gap pagi</span><b class="' + pctClass(s.gap_pct) + '">' + fmtPct(s.gap_pct) + '</b></div>' +
+        '<div class="stat"><span class="label">Sejak open</span><b class="' + pctClass(s.day_return_pct) + '">' + fmtPct(s.day_return_pct) + '</b></div>' +
+        '<div class="stat"><span class="label">Menit sesi</span><b>' + (isNum(state.data.minutes_since_open) ? state.data.minutes_since_open : '-') + '</b><small>sejak 09:30 ET</small></div>' +
+      '</div></div>' +
+      lockNetwork(s) +
+      ladder +
+      '<p class="explain">' + escapeHtml(explainSignal(s, bench, cfg, s.signal)) + '</p>' +
+      (s.signal === 'BUY_LAGGING' ? '<div class="explain-note">Level SL/TP hanya ilustrasi, bukan rekomendasi.</div>' : '') +
+    '</div>';
+}
+
+/* =====================================================================
+ *  JARINGAN ANTAR-SAHAM
+ * ===================================================================== */
+function renderNetwork(rows) {
+  const net = state.data.network;
+  const present = new Set(rows.map((r) => r.ticker));
+  if (!net || !net.tickers.length) {
+    $('clusterList').innerHTML = '<div class="muted">Data jaringan belum tersedia dari server (perlu Edge Function v6).</div>';
+    $('heatmap').innerHTML = ''; $('netMeta').textContent = '';
+    return;
+  }
+  const c = state.data.config;
+  $('netMeta').textContent = net.clusters.length + ' klaster · ' + net.edges.length + ' garis r ≥ ' + ((c && c.peerCorrMin) ?? 0.6);
+  const byTk = Object.fromEntries(rows.map((r) => [r.ticker, r]));
+  const solo = rows.filter((r) => !r.cluster).map((r) => r.ticker);
+  $('clusterList').innerHTML = net.clusters.map((cl) => {
+    const col = clusterColor(cl.id);
+    const zs = cl.members.map((m) => byTk[m] && byTk[m].peer_z).filter(isNum);
+    const most = cl.members.filter((m) => byTk[m] && isNum(byTk[m].peer_z)).sort((a, b) => byTk[a].peer_z - byTk[b].peer_z)[0];
+    return '<div class="cl-card" style="--cc:' + col + '">' +
+      '<div class="cl-card-top"><b>' + escapeHtml(cl.id) + '</b><div class="cl-members">' +
+        cl.members.map((m) => '<button type="button" class="cl-member' + (m === cl.leader ? ' lead' : '') + '" data-ticker="' + escapeHtml(m) + '"' + (present.has(m) ? '' : ' disabled') + '>' + escapeHtml(m) + '</button>').join('') +
+      '</div></div>' +
+      '<div class="cl-stats">' +
+        '<div class="stat"><span class="label">Rata² r</span><b>' + fmtNum(cl.avg_r) + '</b></div>' +
+        '<div class="stat"><span class="label">Ret 15m klaster</span><b class="' + pctClass(cl.avg_return_15m) + '">' + fmtPct(cl.avg_return_15m) + '</b></div>' +
+        '<div class="stat"><span class="label">Paling tertinggal</span><b>' + (most ? escapeHtml(most) + ' <span class="' + zClass(byTk[most].peer_z, state.cfg) + '">' + fmtSigned(byTk[most].peer_z) + '</span>' : '-') + '</b></div>' +
+      '</div></div>';
+  }).join('') + (solo.length ? '<div class="cl-card" style="--cc:var(--line)"><div class="cl-card-top"><span class="cl-chip none">solo</span><div class="cl-members">' +
+    solo.map((m) => '<button type="button" class="cl-member" data-ticker="' + escapeHtml(m) + '">' + escapeHtml(m) + '</button>').join('') +
+    '</div></div><div class="calib-hint">Korelasinya dengan saham lain di bawah ambang klaster, jadi tidak punya pembanding klaster.</div></div>' : '');
+
+  // heatmap, diurutkan per klaster
+  const order = [];
+  net.clusters.forEach((cl) => cl.members.forEach((m) => { if (net.tickers.includes(m)) order.push(m); }));
+  net.tickers.forEach((t) => { if (!order.includes(t)) order.push(t); });
+  const ix = (t) => net.tickers.indexOf(t);
+  const cell = (r, self) => {
+    if (self) return '<td class="self" style="background:rgba(63,224,255,.08)">–</td>';
+    if (!isNum(r)) return '<td class="self">·</td>';
+    const a = Math.min(1, Math.abs(r));
+    const bg = r >= 0 ? 'rgba(63,224,255,' + (0.08 + a * 0.62).toFixed(2) + ')' : 'rgba(255,77,106,' + (0.08 + a * 0.62).toFixed(2) + ')';
+    return '<td style="background:' + bg + (a > 0.7 ? ';color:#04080e;font-weight:600' : '') + '">' + r.toFixed(2) + '</td>';
+  };
+  const head = (t) => { const col = clusterColor(byTk[t] && byTk[t].cluster); return '<span' + (col ? ' style="color:' + col + '"' : '') + '>' + escapeHtml(t) + '</span>'; };
+  $('heatmap').innerHTML = '<thead><tr><th></th>' + order.map((t) => '<th>' + head(t) + '</th>').join('') + '</tr></thead><tbody>' +
+    order.map((a) => '<tr><th class="rowh">' + head(a) + '</th>' + order.map((b) => cell((net.matrix[ix(a)] || [])[ix(b)], a === b)).join('') + '</tr>').join('') + '</tbody>';
+}
+
+/* =====================================================================
+ *  KINERJA
+ * ===================================================================== */
+function aggregate(rows) {
+  const n = rows.length;
+  if (!n) return null;
+  let wins = 0, sum = 0, gp = 0, gl = 0, tp = 0, sl = 0, to = 0, mfe = 0, mfeN = 0, mae = 0, maeN = 0, bars = 0, barsN = 0;
+  rows.forEach((r) => {
+    const x = r.return_pct;
+    sum += x;
+    if (x > 0) { wins++; gp += x; } else { gl += -x; }
+    if (r.outcome === 'TP') tp++; else if (r.outcome === 'SL') sl++; else if (r.outcome === 'TIMEOUT') to++;
+    if (isNum(r.mfe_pct)) { mfe += r.mfe_pct; mfeN++; }
+    if (isNum(r.mae_pct)) { mae += r.mae_pct; maeN++; }
+    if (isNum(r.bars_held)) { bars += r.bars_held; barsN++; }
+  });
+  return { n, win: wins / n * 100, avg: sum / n, total: sum, pf: gl > 0 ? gp / gl : (gp > 0 ? Infinity : null), tp, sl, to,
+    mfe: mfeN ? mfe / mfeN : null, mae: maeN ? mae / maeN : null, mins: barsN ? bars / barsN * 5 : null };
+}
+function perfRow(label, a) {
+  if (!a) return '<tr><td>' + label + '</td><td class="r muted">0</td><td colspan="4" class="muted">-</td></tr>';
+  return '<tr><td>' + label + '</td><td class="r">' + a.n + '</td><td class="r">' + a.win.toFixed(0) + '%</td>' +
+    '<td class="r ' + pctClass(a.avg) + '">' + fmtPct(a.avg) + '</td><td class="r ' + pctClass(a.total) + '">' + fmtPct(a.total, 1) + '</td>' +
+    '<td class="r muted">' + a.tp + '/' + a.sl + '/' + a.to + '</td></tr>';
+}
+function ringSvg(frac, value, label, color) {
+  const R = 44, C = 2 * Math.PI * R, off = C * (1 - clamp(frac, 0, 1));
+  return '<div class="ring" style="color:' + color + '"><svg viewBox="0 0 100 100" aria-hidden="true">' +
+    '<circle class="bg" cx="50" cy="50" r="' + R + '"/>' +
+    '<circle class="tk" cx="50" cy="50" r="' + (R + 6) + '"/>' +
+    '<circle class="fg" cx="50" cy="50" r="' + R + '" stroke="' + color + '" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" style="--c:' + C.toFixed(1) + '"/>' +
+    '</svg><div class="ring-txt"><b>' + value + '</b><small>' + label + '</small></div></div>';
+}
+function equityHtml(rows) {
+  const pts = rows.slice().sort((a, b) => a.created_at - b.created_at);
+  let cum = 0;
+  const vals = [0].concat(pts.map((r) => (cum += r.return_pct)));
+  const W = 600, H = 130, P = 6;
+  let min = Math.min(0, ...vals), max = Math.max(0, ...vals);
+  if (max - min < 0.5) { max += 0.25; min -= 0.25; }
+  const x = (i) => P + (W - 2 * P) * i / Math.max(1, vals.length - 1);
+  const y = (v) => P + (H - 2 * P) * (1 - (v - min) / (max - min));
+  const line = vals.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ');
+  const area = line + ' L' + x(vals.length - 1).toFixed(1) + ' ' + y(min).toFixed(1) + ' L' + x(0).toFixed(1) + ' ' + y(min).toFixed(1) + ' Z';
+  const last = vals[vals.length - 1];
+  const grid = [0.25, 0.5, 0.75].map((f) => '<line x1="0" x2="' + W + '" y1="' + (P + (H - 2 * P) * f) + '" y2="' + (P + (H - 2 * P) * f) + '" stroke="rgba(63,224,255,.08)" vector-effect="non-scaling-stroke"/>').join('');
+  return '<div class="equity-head"><span class="label">Kurva hasil kumulatif · ' + pts.length + ' sinyal</span><b class="' + pctClass(last) + '">' + fmtPct(last) + '</b></div>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-label="Kurva hasil kumulatif">' +
+      '<defs><linearGradient id="eqFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e8c170" stop-opacity=".35"/><stop offset="1" stop-color="#e8c170" stop-opacity="0"/></linearGradient></defs>' +
+      grid +
+      '<line x1="0" x2="' + W + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '" stroke="rgba(111,147,166,.6)" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>' +
+      '<path d="' + area + '" fill="url(#eqFill)"/>' +
+      '<path d="' + line + '" fill="none" stroke="#e8c170" stroke-width="2" vector-effect="non-scaling-stroke" style="filter:drop-shadow(0 0 4px rgba(232,193,112,.7))"/>' +
+    '</svg>' +
+    '<div class="equity-axis"><span>maks ' + fmtPct(max, 1) + '</span><span>garis putus = 0%</span><span>min ' + fmtPct(min, 1) + '</span></div>';
+}
+function renderPerformance() {
+  const p = state.perf;
+  $('perfMode').textContent = p.mode === 'simulation' ? 'SIMULASI · bukan hasil nyata' : 'sinyal tertutup · belum termasuk komisi & slippage';
+  const clear = () => { $('perfTop').innerHTML = ''; $('perfEquity').innerHTML = ''; $('perfGroups').innerHTML = ''; $('perfTickers').innerHTML = ''; $('perfFactors').innerHTML = ''; };
+  if (p.error) { $('perfWarn').innerHTML = '<div class="note err">Gagal membaca data kinerja: ' + escapeHtml(p.error) + '. Jika kolom outcome belum ada, jalankan migration_v3.sql.</div>'; clear(); return; }
+  const all = aggregate(p.rows);
+  if (!all) { $('perfWarn').innerHTML = '<div class="note">Belum ada sinyal yang tertutup. Statistik muncul setelah sinyal pertama kena TP, SL, atau batas waktu.</div>'; clear(); return; }
+  $('perfWarn').innerHTML = all.n < PERF_MIN_SAMPLE ? '<div class="note">Baru ' + all.n + ' sinyal tertutup. Butuh sekitar ' + PERF_MIN_SAMPLE + ' sebelum angka ini cukup bermakna untuk mengubah threshold.</div>' : '';
+  const pfTxt = all.pf === null ? '-' : (all.pf === Infinity ? '∞' : all.pf.toFixed(2));
+  const pfFrac = all.pf === null ? 0 : (all.pf === Infinity ? 1 : all.pf / 3);
+  $('perfTop').innerHTML =
+    '<div class="rings">' + ringSvg(all.win / 100, all.win.toFixed(0) + '%', 'Win rate', COLORS.cyan) + ringSvg(pfFrac, pfTxt, 'Profit factor', COLORS.gold) + '</div>' +
+    '<div class="kpis">' +
+      '<div class="kpi"><span class="label">Tertutup</span><b>' + all.n + '</b><small>TP ' + all.tp + ' · SL ' + all.sl + ' · TO ' + all.to + '</small></div>' +
+      '<div class="kpi"><span class="label">Rata² / sinyal</span><b class="' + pctClass(all.avg) + '">' + fmtPct(all.avg) + '</b><small>total ' + fmtPct(all.total, 1) + '</small></div>' +
+      '<div class="kpi"><span class="label">MFE / MAE</span><b class="pos">' + fmtPct(all.mfe) + '</b><small>MAE ' + fmtPct(all.mae) + '</small></div>' +
+      '<div class="kpi"><span class="label">Durasi rata²</span><b>' + (isNum(all.mins) ? Math.round(all.mins) + ' mnt' : '-') + '</b><small>sejak bar entry</small></div>' +
+    '</div>';
+  $('perfEquity').innerHTML = equityHtml(p.rows);
+  const by = (pred) => aggregate(p.rows.filter(pred));
+  $('perfGroups').innerHTML = perfRow('<b>Semua</b>', all) + perfRow('Alert terkirim', by((r) => r.alert_sent)) + perfRow('Diblokir guardrail', by((r) => r.blocked)) +
+    Object.keys(GUARD).map((k) => perfRow('<span class="badge b-g g-' + k + '">' + GUARD[k] + '</span>', by((r) => r.ai_status === k))).join('');
+  const tickers = Array.from(new Set(p.rows.map((r) => r.ticker)));
+  $('perfTickers').innerHTML = tickers.map((t) => ({ t, a: by((r) => r.ticker === t) })).sort((x, y) => y.a.n - x.a.n || y.a.avg - x.a.avg)
+    .map((x) => perfRow('<b>' + escapeHtml(x.t) + '</b>', x.a)).join('');
+  $('perfFactors').innerHTML = FACTORS.map((f) => factorCard(f, p.rows)).join('');
+}
+
+// Faktor konteks yang dicatat di setiap sinyal (v5). Pembagian kelompok sengaja kasar supaya tiap kelompok
+// cepat terisi; bila datanya sudah banyak, batasnya bisa dipersempit.
+const FACTORS = [
+  { key: 'rvol', title: 'Volume relatif (RVOL)', buckets: [
+    ['Sepi (< 0,8×)', (v) => v < 0.8], ['Normal (0,8–1,5×)', (v) => v >= 0.8 && v <= 1.5], ['Ramai (> 1,5×)', (v) => v > 1.5]] },
+  { key: 'vwap_dist_pct', title: 'Saham vs VWAP', buckets: [
+    ['Di bawah (< −0,1%)', (v) => v < -0.1], ['Dekat (±0,1%)', (v) => Math.abs(v) <= 0.1], ['Di atas (> +0,1%)', (v) => v > 0.1]] },
+  { key: 'qqq_vwap_dist_pct', title: 'QQQ vs VWAP', buckets: [
+    ['QQQ di bawah VWAP', (v) => v < 0], ['QQQ di atas VWAP', (v) => v >= 0]] },
+  { key: 'minutes_since_open', title: 'Waktu sesi', buckets: [
+    ['Pembukaan (0–30 mnt)', (v) => v < 30], ['Pagi (30–120)', (v) => v >= 30 && v < 120], ['Siang (120–300)', (v) => v >= 120 && v < 300], ['Jelang tutup (300+)', (v) => v >= 300]] },
+  { key: 'lag_z', title: 'Kedalaman lag (z)', buckets: [
+    ['Dangkal (> −1,5)', (v) => v > -1.5], ['Sedang (−1,5 s/d −2)', (v) => v <= -1.5 && v > -2], ['Dalam (≤ −2)', (v) => v <= -2]] },
+  { key: 'gap_pct', title: 'Gap pagi saham', buckets: [
+    ['Gap turun (< −0,5%)', (v) => v < -0.5], ['Datar (±0,5%)', (v) => Math.abs(v) <= 0.5], ['Gap naik (> +0,5%)', (v) => v > 0.5]] },
+  { key: 'atr_pct', title: 'Volatilitas (ATR%)', buckets: [
+    ['Rendah (< 0,25%)', (v) => v < 0.25], ['Sedang (0,25–0,5%)', (v) => v >= 0.25 && v <= 0.5], ['Tinggi (> 0,5%)', (v) => v > 0.5]] },
+  { key: 'peer_z', title: 'Lag vs klaster (z)', buckets: [
+    ['Ikut klaster (> −0,5)', (v) => v > -0.5], ['Sedikit tertinggal (−0,5 s/d −1)', (v) => v <= -0.5 && v > -1], ['Tertinggal klaster (≤ −1)', (v) => v <= -1]] },
+  { key: 'lead_score', title: 'Peran di jaringan', buckets: [
+    ['Pengikut (< −0,05)', (v) => v < -0.05], ['Netral (±0,05)', (v) => Math.abs(v) <= 0.05], ['Pemimpin (> +0,05)', (v) => v > 0.05]] }
+];
+const FACTOR_MIN_N = 10;
+function factorCard(f, rows) {
+  const withVal = rows.filter((r) => isNum(r[f.key]));
+  const missing = rows.length - withVal.length;
+  const body = f.buckets.map(([label, pred]) => {
+    const a = aggregate(withVal.filter((r) => pred(r[f.key])));
+    if (!a) return '<div class="frow thin"><span>' + label + '</span><span class="n">0</span><span class="wbar"><span>-</span></span><span class="avg">-</span></div>';
+    return '<div class="frow' + (a.n < FACTOR_MIN_N ? ' thin' : '') + '"><span>' + label + '</span><span class="n">' + a.n + '</span>' +
+      '<span class="wbar"><i style="width:' + a.win.toFixed(0) + '%"></i><span>' + a.win.toFixed(0) + '%</span></span>' +
+      '<span class="avg ' + pctClass(a.avg) + '">' + fmtPct(a.avg) + '</span></div>';
+  }).join('');
+  return '<div class="factor"><h3>' + f.title + '</h3>' +
+    '<div class="frow head"><span>Kelompok</span><span class="n">N</span><span>Win</span><span class="avg">Rata²</span></div>' + body +
+    (missing ? '<div class="miss">' + missing + ' sinyal tanpa data faktor ini (sinyal lama atau data belum cukup)</div>' : '') + '</div>';
+}
+
+/* =====================================================================
+ *  LOG MISI
+ * ===================================================================== */
+function renderHistory() {
+  const h = state.history, box = $('historyBody');
+  $('historyMode').textContent = h.mode === 'simulation' ? 'SIMULASI · contoh log, bukan sinyal nyata' : '';
+  if (h.error) { $('historySummary').innerHTML = ''; box.innerHTML = '<div class="note err">Gagal membaca log: ' + escapeHtml(h.error) + '</div>'; return; }
+  const cnt = { PASSED: 0, NO_NEWS: 0, BYPASSED: 0, REJECTED: 0 };
+  h.rows.forEach((r) => { cnt[r.ai_status]++; });
+  $('historySummary').innerHTML = '<span class="badge b-g muted" style="border-color:var(--line)">TOTAL ' + (isNum(h.total) ? h.total : h.rows.length) + '</span>' +
+    Object.keys(GUARD).map((k) => '<span class="badge b-g g-' + k + '">' + GUARD[k] + ' ' + cnt[k] + '</span>').join('');
+  if (!h.rows.length) { box.innerHTML = '<div class="muted">Belum ada sinyal tercatat. Jika yakin sudah ada, pastikan policy RLS baca untuk anon sudah dibuat.</div>'; return; }
+  box.innerHTML = h.rows.map((r) => {
+    let res = '<span class="muted">-</span>';
+    if (r.outcome) {
+      res = '<span class="o-' + r.outcome + '">' + OUTCOME[r.outcome] + '</span>';
+      if (isNum(r.return_pct)) res += ' <span class="' + pctClass(r.return_pct) + '">' + fmtPct(r.return_pct) + '</span>';
+      else if (r.outcome === 'OPEN' && (isNum(r.mfe_pct) || isNum(r.mae_pct))) res += ' <span class="muted">MFE ' + fmtPct(r.mfe_pct) + ' / MAE ' + fmtPct(r.mae_pct) + '</span>';
+    }
+    return '<div class="log-line">' +
+      '<span class="t">' + escapeHtml(isNaN(r.created_at.getTime()) ? '-' : fmtWibDateTime(r.created_at)) + '</span>' +
+      '<span class="tk">' + escapeHtml(r.ticker) + '</span>' +
+      '<span class="arrow">▸</span><span>z <span class="z-buy">' + fmtSigned(r.lag_z) + '</span></span>' +
+      '<span class="muted">QQQ ' + fmtPct(r.qqq_return) + '</span>' +
+      '<span>IN ' + fmtPrice(r.entry_price) + '</span>' +
+      '<span class="muted">SL ' + fmtNum(r.stop_loss) + ' · TP ' + fmtNum(r.take_profit) + '</span>' +
+      '<span class="arrow">▸</span><span class="g-' + r.ai_status + '">' + GUARD[r.ai_status] + '</span>' +
+      '<span class="arrow">▸</span>' + res +
+      (r.ai_reason ? '<span class="why">› ' + escapeHtml(r.ai_reason) + '</span>' : '') +
+    '</div>';
+  }).join('');
+}
+
+/* =====================================================================
+ *  RENDER ALL
+ * ===================================================================== */
+function renderNoData() {
+  state.rows = []; state.positions = {};
+  nodesDS.clear(); edgesDS.clear();
+  $('signalBody').innerHTML = '<tr class="empty-row"><td colspan="12">Data live belum tersedia. Coba Refresh beberapa saat lagi.</td></tr>';
+  $('clusterList').innerHTML = ''; $('heatmap').innerHTML = ''; $('netMeta').textContent = '';
+  $('signalCards').innerHTML = '<div class="muted">Data live belum tersedia.</div>';
+  $('signalSummary').innerHTML = ''; $('skippedNote').innerHTML = ''; $('serverCfg').textContent = '';
+  $('detailPanel').innerHTML = '<p class="lock-empty">Tidak ada data.</p>';
+}
+function renderAll(lockAnimate = false) {
+  if (state.data) {
+    const rows = computeSignals();
+    state.rows = rows;
+    if (!rows.some((r) => r.ticker === state.selected)) {
+      state.selected = rows.length ? rows[0].ticker : null;
+      state.lockStart = performance.now(); lockAnimate = true;
+    }
+    renderGraph(rows);
+    renderSignals(rows);
+    renderNetwork(rows);
+    renderLock(rows, lockAnimate);
+  } else if (state.mode === 'none') {
+    renderNoData();
+  }
+  renderPerformance();
+  renderHistory();
+  updateStatusBar();
+}
+function selectTicker(tk) {
+  if (state.selected === tk) return;
+  state.selected = tk;
+  state.lockStart = performance.now();
+  renderAll(true);
+  if (window.innerWidth <= 1000) {
+    const lock = $('detailPanel').closest('.panel');
+    const r = lock.getBoundingClientRect();
+    if (r.top < 60 || r.top > window.innerHeight * 0.6) lock.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' });
+  }
+}
+
+/* =====================================================================
+ *  KALIBRASI
+ * ===================================================================== */
+function syncCfgLabels() {
+  $('lblQqq').textContent = '> +' + state.cfg.qqqThreshold.toFixed(2) + '%';
+  $('lblCorr').textContent = '≥ ' + state.cfg.corrThreshold.toFixed(2);
+  $('lblZLag').textContent = 'z ≤ −' + state.cfg.zLag.toFixed(1);
+  $('lblZDiv').textContent = 'z ≤ −' + effZDiv(state.cfg).toFixed(2);
+}
+function syncCfgInputs() {
+  $('rngQqq').value = state.cfg.qqqThreshold; $('rngCorr').value = state.cfg.corrThreshold;
+  $('rngZLag').value = state.cfg.zLag; $('rngZDiv').value = state.cfg.zDiv;
+  syncCfgLabels();
+}
+function bindCfgInputs() {
+  [['rngQqq', 'qqqThreshold'], ['rngCorr', 'corrThreshold'], ['rngZLag', 'zLag'], ['rngZDiv', 'zDiv']].forEach(([id, key]) => {
+    $(id).addEventListener('input', (e) => { state.cfg[key] = parseFloat(e.target.value); syncCfgLabels(); saveCfg(); renderAll(); });
+  });
+  $('btnResetCfg').addEventListener('click', () => { state.cfg = Object.assign({}, DEFAULT_CFG); saveCfg(); syncCfgInputs(); renderAll(); });
+}
+
+/* =====================================================================
+ *  BOOT SEQUENCE (sekali per sesi browser; dilewati jika "kurangi gerakan")
+ * ===================================================================== */
+function runBoot(dataPromise) {
+  const boot = $('boot');
+  let seen = storeGet(BOOT_SESSION_KEY, 'session') === '1';
+  if (REDUCED || seen) return Promise.resolve();
+  storeSet(BOOT_SESSION_KEY, '1', 'session');
+  state.booting = true;
+  boot.hidden = false;
+  const log = $('bootLog'), bar = $('bootBar');
+  let skipped = false;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, skipped ? 0 : ms));
+  const line = (txt, status, cls = '') => { const d = document.createElement('div'); d.innerHTML = escapeHtml(txt) + ' ' + '.'.repeat(Math.max(2, 30 - txt.length)) + ' <b class="' + cls + '">' + escapeHtml(status) + '</b>'; log.appendChild(d); };
+  return new Promise((resolve) => {
+    const finish = () => {
+      if (!boot.classList.contains('out')) {
+        boot.classList.add('out');
+        setTimeout(() => { boot.hidden = true; }, 460);
+        state.booting = false;
+        resolve();
+      }
+    };
+    boot.addEventListener('click', () => { skipped = true; finish(); }, { once: true });
+    (async () => {
+      line('INISIALISASI INTI HUD', 'OK'); bar.style.width = '18%'; await sleep(230);
+      line('KALIBRASI RADAR KORELASI', 'OK'); bar.style.width = '36%'; await sleep(230);
+      line(DEMO_MODE || !isUrlConfigured() ? 'MODE DEMO' : 'TAUTAN SUPABASE / dss-sna', 'OK'); bar.style.width = '52%';
+      if (authEnabled()) { line('OTORISASI PENGGUNA', 'OK'); await sleep(200); }
+      const ok = await Promise.race([dataPromise.then(() => true, () => false), new Promise((r) => setTimeout(() => r(null), 4000))]);
+      const st = state.mode === 'live' ? 'LIVE' : state.mode === 'simulation' ? 'SIMULASI' : 'GAGAL';
+      line('MEMUAT SNAPSHOT PASAR', ok === null ? 'TERTUNDA' : st, st === 'GAGAL' || ok === null ? 'warn' : ''); bar.style.width = '74%'; await sleep(230);
+      const nBuy = state.rows.filter((r) => r.signal === 'BUY_LAGGING').length;
+      line('PEMINDAIAN TARGET', nBuy + ' BUY'); bar.style.width = '90%'; await sleep(230);
+      line('SISTEM SIAP', 'ONLINE'); bar.style.width = '100%'; await sleep(380);
+      finish();
+    })();
+  });
+}
+
+/* =====================================================================
+ *  INISIALISASI
+ * ===================================================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const prefs = JSON.parse(storeGet(PREF_STORAGE_KEY) || '{}');
+    if (typeof prefs.auto === 'boolean') $('autoRefresh').checked = prefs.auto;
+    if (typeof prefs.net === 'boolean') { state.showNet = prefs.net; $('netToggle').checked = prefs.net; }
+  } catch (e) { /* abaikan */ }
+  const savePrefs = () => storeSet(PREF_STORAGE_KEY, JSON.stringify({ auto: $('autoRefresh').checked, net: $('netToggle').checked }));
+  $('netToggle').addEventListener('change', () => { state.showNet = $('netToggle').checked; savePrefs(); if (state.data) renderGraph(state.rows); });
+  $('autoRefresh').addEventListener('change', savePrefs);
+  $('sfx').addEventListener('change', () => { if ($('sfx').checked) beep(true); });
+
+  initNetwork();
+  syncCfgInputs();
+  bindCfgInputs();
+
+  $('btnRefresh').addEventListener('click', refreshData);
+  $('btnCalib').addEventListener('click', () => {
+    const body = $('calibBody'), open = body.hidden;
+    body.hidden = !open;
+    $('btnCalib').textContent = open ? 'Tutup' : 'Buka';
+    $('btnCalib').setAttribute('aria-expanded', String(open));
+  });
+  $('btnResetView').addEventListener('click', () => { userMovedView = false; fitRadar(); });
+  $('btnTgTest').addEventListener('click', testTelegram);
+  $('pillTg').addEventListener('click', () => {
+    if ($('calibBody').hidden) $('btnCalib').click();
+    $('calibPanel').scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' });
+  });
+  const pick = (e) => { const el = e.target.closest('[data-ticker]'); if (el) selectTicker(el.getAttribute('data-ticker')); };
+  $('signalBody').addEventListener('click', pick);
+  $('signalCards').addEventListener('click', pick);
+  $('clusterList').addEventListener('click', pick);
+
+  setInterval(() => { if ($('autoRefresh').checked && !document.hidden) refreshData(); }, REFRESH_INTERVAL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && $('autoRefresh').checked && Date.now() - state.lastRefreshAt > 30000) refreshData();
+  });
+  setInterval(updateStatusBar, 1000);
+  updateStatusBar();
+
+  $('loginForm').addEventListener('submit', onLoginSubmit);
+  $('btnBack').addEventListener('click', () => setLoginStep('email'));
+  $('btnResend').addEventListener('click', () => sendMagicLink(loginEmail));
+  $('btnMagic').addEventListener('click', () => sendMagicLink($('loginEmail').value.trim().toLowerCase()));
+  $('btnLogout').addEventListener('click', signOutAndReload);
+
+  initAuth();
+});
+
+/* =====================================================================
+ *  LOGIN (Supabase Auth: kode OTP lewat email, atau tautan magic link)
+ * ===================================================================== */
+function startApp() {
+  if (state.appStarted) return;
+  state.appStarted = true;
+  const first = refreshData();
+  runBoot(first).then(() => {
+    $('main').classList.add('reveal');
+    if (state.pendingAcquire) { state.pendingAcquire = false; detectAcquisitions(); }
+    fitRadar();
+  });
+}
+
+async function initAuth() {
+  if (!authEnabled()) { startApp(); return; }
+  if (!window.supabase || !window.supabase.createClient) {
+    state.mode = 'none'; updateStatusBar();
+    showAlert('Library login Supabase gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.');
+    return;
+  }
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+  });
+  sb.auth.onAuthStateChange((event, session) => {
+    // jangan memanggil fungsi Supabase lain langsung di dalam callback ini
+    if (session && !state.appStarted) setTimeout(() => enterApp(session), 0);
+    if (event === 'SIGNED_OUT' && state.appStarted) setTimeout(() => location.reload(), 0);
+  });
+  let session = null;
+  try { const { data } = await sb.auth.getSession(); session = data.session; } catch (e) { /* abaikan */ }
+  if (session) enterApp(session); else showLogin();
+}
+
+function enterApp(session) {
+  if (state.appStarted) return;
+  $('login').hidden = true;
+  const email = session && session.user ? session.user.email : '';
+  if (email) { const up = $('userPill'); up.lastElementChild.textContent = email; up.hidden = false; }
+  $('btnLogout').hidden = false;
+  startApp();
+}
+
+let loginEmail = '';
+function showLogin() {
+  $('login').hidden = false;
+  setLoginStep('email');
+  setTimeout(() => $('loginEmail').focus(), 50);
+  try { const last = storeGet('stockSnaDss.lastEmail'); if (last) $('loginEmail').value = last; } catch (e) { /* abaikan */ }
+}
+function setLoginStep(step) {
+  $('stepEmail').hidden = step !== 'email';
+  $('stepCode').hidden = step !== 'code';
+  setLoginMsg('');
+  if (step === 'code') { $('codeEmail').textContent = loginEmail; $('loginCode').value = ''; }
+}
+function setLoginMsg(text, cls = '') { const m = $('loginMsg'); m.className = 'login-msg ' + cls; m.textContent = text; }
+function passwordErrorText(err) {
+  const m = String((err && err.message) || err || '');
+  if (/invalid login credentials|invalid.*password/i.test(m)) return 'Email atau password salah.';
+  if (/email not confirmed/i.test(m)) return 'Email belum dikonfirmasi. Konfirmasi pengguna ini di Supabase (Authentication → Users).';
+  if (/rate limit|too many/i.test(m)) return 'Terlalu banyak percobaan. Tunggu sebentar lalu coba lagi.';
+  return 'Gagal login: ' + m;
+}
+// Cadangan saat lupa password: kirim tautan login (magic link) memakai template email bawaan Supabase.
+async function sendMagicLink(email) {
+  if (!sb) return;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || '')) { setLoginStep('email'); setLoginMsg('Isi email Anda dulu, lalu ketuk lagi.', 'err'); return; }
+  setLoginMsg('Mengirim tautan…');
+  try {
+    const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
+    if (error) { setLoginMsg(otpErrorText(error), 'err'); return; }
+    loginEmail = email;
+    setLoginStep('code');
+    setLoginMsg('Tautan terkirim. Cek kotak masuk dan folder spam.', 'ok');
+  } catch (err) { setLoginMsg(otpErrorText(err), 'err'); }
+}
+function otpErrorText(err) {
+  const m = String((err && err.message) || err || '');
+  if (/signups not allowed|not allowed for otp|user not found|not found/i.test(m)) return 'Email ini belum terdaftar sebagai pengguna dashboard.';
+  if (/rate limit|too many|security purposes|seconds/i.test(m)) return 'Terlalu banyak permintaan email. Tunggu beberapa menit lalu coba lagi.';
+  return 'Gagal mengirim email: ' + m;
+}
+async function onLoginSubmit(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  if (!sb) return;
+  const sending = !$('stepEmail').hidden;
+  const btn = sending ? $('btnSend') : $('btnVerify');
+  if (btn.disabled) return;
+  if (sending) {
+    const email = $('loginEmail').value.trim().toLowerCase();
+    const password = $('loginPass').value;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setLoginMsg('Format email belum benar.', 'err'); return; }
+    if (!password) { setLoginMsg('Isi password Anda.', 'err'); return; }
+    btn.disabled = true; setLoginMsg('Memeriksa akses…');
+    try {
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) { setLoginMsg(passwordErrorText(error), 'err'); return; }
+      storeSet('stockSnaDss.lastEmail', email);
+      setLoginMsg('Akses diterima.', 'ok');
+      if (data && data.session) enterApp(data.session);
+    } catch (err) { setLoginMsg('Gagal login: ' + ((err && err.message) || err), 'err'); }
+    finally { btn.disabled = false; }
+  } else {
+    const token = $('loginCode').value.replace(/\s+/g, '');
+    if (!/^\d{6,10}$/.test(token)) { setLoginMsg('Masukkan kode angka dari email.', 'err'); return; }
+    btn.disabled = true; setLoginMsg('Memeriksa kode…');
+    try {
+      const { data, error } = await sb.auth.verifyOtp({ email: loginEmail, token, type: 'email' });
+      if (error) { setLoginMsg('Kode salah atau sudah kedaluwarsa. Kirim ulang kode lalu coba lagi.', 'err'); return; }
+      setLoginMsg('Akses diterima.', 'ok');
+      if (data && data.session) enterApp(data.session);
+    } catch (err) { setLoginMsg('Gagal memeriksa kode: ' + ((err && err.message) || err), 'err'); }
+    finally { btn.disabled = false; }
+  }
+}
+// Tes Telegram lewat Edge Function (?mode=test-telegram). Server memeriksa login + allowlist.
+async function testTelegram() {
+  const out = $('tgResult'), btn = $('btnTgTest');
+  if (!isUrlConfigured()) { out.className = ''; out.textContent = 'Mode demo: pesan tes tidak dikirim.'; return; }
+  btn.disabled = true; out.className = ''; out.textContent = 'Mengirim…';
+  try {
+    const { json } = await fetchJsonTimeout(SUPABASE_FUNCTION_URL + '?mode=test-telegram', { method: 'GET', headers: await authHeaders() });
+    if (json.ok) { out.className = 'ok'; out.textContent = 'Terkirim. Cek chat Telegram Anda.'; }
+    else { out.className = 'err'; out.textContent = 'Gagal: ' + (json.error || 'tidak diketahui') + (json.configured === false ? '. Set secret TELEGRAM_TOKEN dan TELEGRAM_CHAT_ID di Supabase.' : ''); }
+  } catch (e) {
+    out.className = 'err'; out.textContent = 'Gagal menghubungi server: ' + e.message;
+  } finally { btn.disabled = false; }
+}
+async function signOutAndReload() {
+  try { if (sb) await sb.auth.signOut(); } catch (e) { /* abaikan */ }
+  location.reload();
+}
+</script>
+</body>
+</html>
