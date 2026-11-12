@@ -1,31 +1,13 @@
 // AI Workout Coach berbasis aturan (tanpa LLM / API berbayar).
 // Mengubah hasil analisis menjadi satu pesan yang stabil (tidak berkedip) + suara opsional.
-
-const ISSUE_MSG = {
-  no_pose: { text: 'Tubuh belum terdeteksi. Pastikan seluruh badan masuk layar.', tone: 'warn' },
-  body_not_visible: { text: 'Kepala sampai kaki harus terlihat. Mundur sedikit dari kamera.', tone: 'warn' },
-  out_of_frame: { text: 'Sebagian tubuh keluar layar. Mundur atau atur posisi HP.', tone: 'warn' },
-  wrong_view: { text: 'Posisikan badan menyamping ke kamera.', tone: 'warn' },
-};
-
-const CUE_MSG = {
-  lean: { text: 'Jaga punggung tetap stabil, dada lebih tegak.', tone: 'warn', speak: 'Dada lebih tegak' },
-  unstable: { text: 'Kaki bergeser. Pertahankan posisi tubuh.', tone: 'warn', speak: 'Jaga posisi kaki' },
-  heel: { text: 'Tumit terangkat. Tekan tumit ke lantai.', tone: 'warn', speak: 'Tekan tumit' },
-};
-
-const STATE_MSG = {
-  NEED_STAND: { text: 'Berdiri tegak menyamping untuk memulai.', tone: 'info' },
-  STAND: { text: 'Siap. Turun perlahan.', tone: 'info' },
-  DOWN: { text: 'Turun… pinggul ke belakang.', tone: 'info' },
-  BOTTOM: { text: 'Kedalaman cukup. Dorong naik!', tone: 'good' },
-  UP: { text: 'Naik sampai berdiri tegak.', tone: 'info' },
-};
+// Teks pesan berasal dari definisi latihan (exercise-engine.js).
 
 export class Coach {
-  constructor({ speech = true } = {}) {
+  /** @param {{messages: object, speech?: boolean}} o */
+  constructor({ messages, speech = true }) {
+    this.m = messages;
     this.speechEnabled = speech && 'speechSynthesis' in globalThis;
-    this.current = STATE_MSG.NEED_STAND;
+    this.current = { text: messages.states.NEED_READY, tone: 'info' };
     this.holdUntil = 0; // pesan penting ditahan beberapa saat
     this.lastSpoken = 0;
     this.lastIssueSince = null;
@@ -54,25 +36,27 @@ export class Coach {
 
   /** @returns {{text:string, tone:'info'|'good'|'warn'}} */
   process(result, now) {
-    // 1) Event repetisi: prioritas tertinggi
+    const m = this.m;
+    // 1) Event: prioritas tertinggi
     for (const ev of result.events || []) {
       if (ev.type === 'rep') {
-        const msg = ev.flags.length
-          ? { text: `Repetisi ${ev.count} terhitung. ${CUE_MSG[ev.flags[0]].text}`, tone: 'warn' }
+        const cue = ev.flags.length ? m.cues[ev.flags[0]] : null;
+        const msg = cue
+          ? { text: `Repetisi ${ev.count} terhitung. ${cue.text}`, tone: 'warn' }
           : { text: `Bagus! Repetisi ${ev.count} berhasil.`, tone: 'good' };
         this._show(msg, now, 1600);
         this.say(String(ev.count), now, true);
       } else if (ev.type === 'shallow') {
-        this._show({ text: 'Terlalu dangkal — tidak dihitung. Turunkan pinggul sampai sejajar lutut.', tone: 'warn' }, now, 2200);
-        this.say('Terlalu dangkal', now, true);
+        this._show({ text: m.shallow, tone: 'warn' }, now, 2200);
+        this.say(m.shallowSpeak, now, true);
       } else if (ev.type === 'shallow_warning') {
-        this._show({ text: 'Turunkan tubuh sedikit lagi.', tone: 'warn' }, now, 1200);
+        this._show({ text: m.shallowWarning, tone: 'warn' }, now, 1200);
       } else if (ev.type === 'too_fast') {
-        this._show({ text: 'Gerakan terlalu cepat. Lakukan lebih terkontrol.', tone: 'warn' }, now, 1800);
+        this._show({ text: 'Gerakan terlalu cepat — tidak dihitung. Lakukan lebih terkontrol.', tone: 'warn' }, now, 1800);
       } else if (ev.type === 'aborted') {
-        this._show({ text: 'Tracking terputus, repetisi dibatalkan. Berdiri tegak lagi.', tone: 'warn' }, now, 2000);
+        this._show({ text: m.aborted, tone: 'warn' }, now, 2000);
       } else if (ev.type === 'ready') {
-        this._show({ text: 'Siap! Mulai squat.', tone: 'good' }, now, 1000);
+        this._show({ text: m.ready, tone: 'good' }, now, 1000);
         this.say('Siap', now);
       }
     }
@@ -84,22 +68,25 @@ export class Coach {
       if (this.lastIssueSince === null) this.lastIssueSince = now;
       // tunggu sebentar agar gangguan sesaat tidak langsung memunculkan peringatan
       if (now - this.lastIssueSince > 400) {
-        this.current = ISSUE_MSG[result.issue] || ISSUE_MSG.no_pose;
+        this.current = { text: m.issues[result.issue] || m.issues.no_pose, tone: 'warn' };
       }
       return this.current;
     }
     this.lastIssueSince = null;
 
-    // 3) Koreksi teknik saat repetisi
+    // 3) Koreksi teknik
     if (result.cues?.length) {
-      const cue = CUE_MSG[result.cues[0]];
-      this._show(cue, now, 1200);
-      this.say(cue.speak, now);
-      return this.current;
+      const cue = m.cues[result.cues[0]];
+      if (cue) {
+        this._show({ text: cue.text, tone: 'warn' }, now, 1200);
+        this.say(cue.speak, now);
+        return this.current;
+      }
     }
 
     // 4) Panduan fase gerakan
-    this.current = STATE_MSG[result.state] || this.current;
+    const tone = result.state === 'BOTTOM' ? 'good' : 'info';
+    this.current = { text: m.states[result.state] || this.current.text, tone };
     return this.current;
   }
 

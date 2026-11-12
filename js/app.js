@@ -4,7 +4,7 @@ import { EXERCISES, getExercise } from './exercise-engine.js';
 import { WorkoutSession } from './workout-session.js';
 import { storage } from './storage.js';
 import { computeStats, formatDuration, formatClock, formatDate, last7Days, renderChart } from './dashboard.js';
-import { getForceCpu, setForceCpu } from './pose-detection.js';
+import { getForceCpu, setForceCpu, getModelVariant, setModelVariant } from './pose-detection.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -21,7 +21,9 @@ const ISSUE_SHORT = {
   no_pose: 'Tubuh tidak terdeteksi',
   body_not_visible: 'Tubuh tidak utuh',
   out_of_frame: 'Tubuh terpotong',
-  wrong_view: 'Belum menyamping',
+  wrong_view: 'Sudut kamera belum pas',
+  not_plank: 'Belum posisi plank',
+  not_standing: 'Belum berdiri tegak',
 };
 
 const state = {
@@ -82,11 +84,16 @@ async function renderHome() {
   } else {
     list.innerHTML = history.slice(0, 10).map((x) => `
       <li>
-        <div class="h-main">
-          <div class="h-title">${esc(x.exerciseName)}${x.mock ? '<span class="badge">DEMO</span>' : ''}</div>
-          <div class="h-sub">${esc(formatDate(x.date))} · ${esc(formatDuration(x.durationSec))}</div>
-        </div>
-        <div class="h-reps">${x.reps}</div>
+        <details>
+          <summary>
+            <div class="h-main">
+              <div class="h-title">${esc(x.exerciseName)}${x.mock ? '<span class="badge">DEMO</span>' : ''}</div>
+              <div class="h-sub">${esc(formatDate(x.date))} · ${esc(formatDuration(x.durationSec))}</div>
+            </div>
+            <div class="h-reps">${x.reps}</div>
+          </summary>
+          <ul class="h-notes">${(x.notes || ['Tidak ada catatan.']).map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
+        </details>
       </li>`).join('');
   }
   $('btn-clear-history').hidden = !history.length;
@@ -102,9 +109,11 @@ function openSetup(id) {
   $('guide-title').textContent = ex.guide.title;
   $('guide-steps').innerHTML = ex.guide.steps.map((s) => `<li>${esc(s)}</li>`).join('');
   $('guide-note').textContent = ex.guide.note;
+  $('guide-art').innerHTML = ex.guide.art;
   $('target-value').textContent = state.target;
   $('opt-sound').checked = state.sound;
   $('opt-cpu').checked = getForceCpu();
+  $('opt-full').checked = getModelVariant() === 'full';
   show('view-setup');
 }
 
@@ -124,7 +133,8 @@ function resetWorkoutUi() {
   $('progress-fill').style.width = '0%';
   $('depth-fill').style.height = '0%';
   $('depth-angle').textContent = '—';
-  $('coach-text').textContent = 'Berdiri tegak menyamping untuk memulai.';
+  $('coach-text').textContent = state.exercise.messages.states.NEED_READY;
+  $('depth-mark').style.top = '';
   $('coach').dataset.tone = 'info';
   $('pill-track').dataset.state = '';
   $('track-text').textContent = 'Mencari tubuh…';
@@ -177,22 +187,26 @@ function onFrame(u) {
   const now = performance.now();
   if (!ui.slowT || now - ui.slowT > 250) {
     ui.slowT = now;
-    $('pill-fps').textContent = `${Math.round(u.fps || 0)} FPS · ${u.delegate || ''}`;
+    $('pill-fps').textContent = `${Math.round(u.fps || 0)} FPS · ${u.delegate || ''}${u.model === 'full' ? ' · FULL' : ''}`;
     const q = Math.round((u.quality || 0) * 100);
     const label = !u.detected ? '—' : q >= 80 ? 'Baik' : q >= 60 ? 'Sedang' : 'Buruk';
     $('pill-quality').textContent = `Kualitas ${label}${u.detected ? ` ${q}%` : ''}`;
   }
 
   const m = u.metrics;
-  if (u.valid && Number.isFinite(m.kneeAngle)) {
-    const d = Math.round((m.depth || 0) * 100);
+  if (ui.mark !== m.progressMark && Number.isFinite(m.progressMark)) {
+    ui.mark = m.progressMark;
+    $('depth-mark').style.top = `${(m.progressMark * 100).toFixed(1)}%`;
+  }
+  if (u.valid && Number.isFinite(m.angle)) {
+    const d = Math.round((m.progress || 0) * 100);
     if (ui.depth !== d) {
       ui.depth = d;
       const fill = $('depth-fill');
       fill.style.height = `${d}%`;
-      fill.classList.toggle('short', d < 87 && ['DOWN', 'UP'].includes(u.state));
+      fill.classList.toggle('short', d < Math.round((m.progressMark || 1) * 100) && ['DOWN', 'UP'].includes(u.state));
     }
-    setText('angle', $('depth-angle'), `${Math.round(m.kneeAngle)}°`);
+    setText('angle', $('depth-angle'), `${Math.round(m.angle)}°`);
   } else {
     setText('angle', $('depth-angle'), '—');
   }
@@ -200,6 +214,7 @@ function onFrame(u) {
 
 async function startWorkout() {
   setForceCpu($('opt-cpu').checked);
+  setModelVariant($('opt-full').checked ? 'full' : 'lite');
   state.sound = $('opt-sound').checked;
   resetWorkoutUi();
   show('view-workout');
@@ -246,7 +261,7 @@ function togglePause() {
   if (s.paused) {
     s.resume();
     $('btn-pause').textContent = 'Jeda';
-    toast('Lanjut. Berdiri tegak dulu sebelum mulai lagi.');
+    toast('Lanjut. Kembali ke posisi awal dulu sebelum mulai lagi.');
   } else {
     s.pause();
     $('btn-pause').textContent = 'Lanjutkan';
@@ -256,20 +271,21 @@ function togglePause() {
   }
 }
 
-function buildNotes(sum) {
+function buildNotes(sum, ex) {
   const q = sum.quality;
   const notes = [];
   if (sum.reps === 0) {
-    notes.push('Belum ada repetisi terhitung. Pastikan tubuh terlihat utuh dari samping dan turun sampai pinggul kira-kira sejajar lutut.');
+    notes.push(ex.notes.zeroReps);
   } else if (q.goodReps === sum.reps) {
     notes.push('Semua repetisi terhitung tanpa peringatan teknik. Pertahankan!');
   } else {
     notes.push(`${q.goodReps} dari ${sum.reps} repetisi tanpa peringatan teknik.`);
   }
-  if (q.flags.lean) notes.push(`Badan terlalu condong ke depan pada ${q.flags.lean} repetisi — jaga dada tetap tegak.`);
-  if (q.flags.unstable) notes.push(`Kaki bergeser pada ${q.flags.unstable} repetisi — jaga posisi kaki tetap.`);
-  if (q.flags.heel) notes.push(`Tumit terangkat pada ${q.flags.heel} repetisi — tekan tumit ke lantai.`);
-  if (q.shallow) notes.push(`${q.shallow} gerakan terlalu dangkal sehingga tidak dihitung.`);
+  for (const [flag, text] of Object.entries(ex.notes.flags)) {
+    const n = q.flags[flag];
+    if (n) notes.push(`${n} repetisi: ${text}.`);
+  }
+  if (q.shallow) notes.push(`${q.shallow} ${ex.notes.shallow}.`);
   if (q.aborted) notes.push(`${q.aborted} repetisi dibatalkan karena tubuh sempat tidak terlihat.`);
   notes.push('Catatan ini berasal dari estimasi kamera, bukan penilaian medis.');
   return notes;
@@ -280,7 +296,7 @@ async function finishWorkout() {
   if (!s) return;
   state.session = null;
   const sum = s.finish();
-  sum.notes = buildNotes(sum);
+  sum.notes = buildNotes(sum, state.exercise);
   state.lastSummary = sum;
 
   if (sum.durationSec >= 3 || sum.reps > 0) {

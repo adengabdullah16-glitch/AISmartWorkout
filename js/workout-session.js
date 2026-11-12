@@ -2,14 +2,9 @@
 
 import { Camera } from './camera.js';
 import { PoseDetector } from './pose-detection.js';
-import { LandmarkSmoother, LM } from './geometry.js';
+import { LandmarkSmoother } from './geometry.js';
 import { SkeletonRenderer } from './skeleton-renderer.js';
 import { Coach } from './coach.js';
-
-const ANGLE_JOINTS = {
-  left: { from: LM.LEFT_HIP, at: LM.LEFT_KNEE, to: LM.LEFT_ANKLE },
-  right: { from: LM.RIGHT_HIP, at: LM.RIGHT_KNEE, to: LM.RIGHT_ANKLE },
-};
 
 export class WorkoutSession {
   /**
@@ -30,7 +25,7 @@ export class WorkoutSession {
     this.analyzer = o.exercise.create();
     this.smoother = new LandmarkSmoother();
     this.renderer = new SkeletonRenderer(o.canvas);
-    this.coach = new Coach({ speech: o.speech !== false });
+    this.coach = new Coach({ messages: o.exercise.messages, speech: o.speech !== false });
     this.camera = o.mock ? null : new Camera(o.video);
     this.detector = null;
     this.running = false;
@@ -63,7 +58,7 @@ export class WorkoutSession {
 
     if (this.o.mock) {
       const { MockPoseDetector, MOCK_SIZE } = await import('./dev/synthetic-pose.js');
-      this.detector = new MockPoseDetector();
+      this.detector = new MockPoseDetector(this.exercise.id);
       this.size = MOCK_SIZE;
     } else {
       this.detector = new PoseDetector();
@@ -125,15 +120,15 @@ export class WorkoutSession {
       this.coach.say('Target tercapai', now, true);
     }
 
-    const side = result.metrics?.side;
-    const joints = side ? ANGLE_JOINTS[side] : null;
+    const viz = result.valid ? result.viz : null;
     this.renderer.draw(landmarks, {
-      side,
+      side: viz?.side,
       valid: result.valid,
       warn: result.valid && result.cues.length > 0,
+      highlight: viz?.highlight,
       mirrored: this.mirrored,
       background: !this.camera,
-      angle: result.valid && joints ? { value: result.metrics.kneeAngle, ...joints } : null,
+      angle: viz?.angle || null,
     });
 
     this.o.onFrame({
@@ -150,6 +145,7 @@ export class WorkoutSession {
       detected: !!landmarks,
       elapsedMs: this.elapsedMs,
       delegate: this.detector.delegate,
+      model: this.detector.model,
       targetReached: result.reps >= this.target,
     });
   };

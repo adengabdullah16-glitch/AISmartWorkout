@@ -4,6 +4,14 @@
 import { MEDIAPIPE } from './config.js';
 
 const CPU_PREF_KEY = 'smartfit.forceCpu';
+const MODEL_PREF_KEY = 'smartfit.model';
+
+export function getModelVariant() {
+  try { return localStorage.getItem(MODEL_PREF_KEY) === 'full' ? 'full' : 'lite'; } catch { return 'lite'; }
+}
+export function setModelVariant(v) {
+  try { localStorage.setItem(MODEL_PREF_KEY, v === 'full' ? 'full' : 'lite'); } catch { /* abaikan */ }
+}
 
 export function getForceCpu() {
   try { return localStorage.getItem(CPU_PREF_KEY) === '1'; } catch { return false; }
@@ -44,7 +52,8 @@ export class PoseDetector {
     const order = getForceCpu() ? ['CPU'] : ['GPU', 'CPU'];
     let lastErr = null;
     for (const delegate of order) {
-      onStatus(delegate === 'GPU' ? 'Mengunduh model pose (± 5 MB)…' : 'Menyiapkan mode CPU…');
+      const size = getModelVariant() === 'full' ? '± 9 MB' : '± 5 MB';
+      onStatus(delegate === 'GPU' ? `Mengunduh model pose (${size})…` : 'Menyiapkan mode CPU…');
       try {
         await this._create(delegate);
         return this.delegate;
@@ -60,7 +69,7 @@ export class PoseDetector {
     this.close();
     this.landmarker = await withTimeout(
       this.lib.PoseLandmarker.createFromOptions(this.vision, {
-        baseOptions: { modelAssetPath: MEDIAPIPE.modelUrl, delegate },
+        baseOptions: { modelAssetPath: MEDIAPIPE.models[getModelVariant()], delegate },
         runningMode: 'VIDEO',
         numPoses: 1,
         minPoseDetectionConfidence: MEDIAPIPE.minPoseDetectionConfidence,
@@ -72,6 +81,7 @@ export class PoseDetector {
       'Waktu habis saat mengunduh model.'
     );
     this.delegate = delegate;
+    this.model = getModelVariant();
     this.lastTs = 0;
   }
 

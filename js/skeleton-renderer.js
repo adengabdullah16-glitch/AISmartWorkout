@@ -12,10 +12,10 @@ const CONNECTIONS = [
 ];
 const JOINTS = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
 
-const ACTIVE = {
-  left: new Set(['11-23', '23-25', '25-27']),
-  right: new Set(['12-24', '24-26', '26-28']),
-};
+// Index sisi kiri tubuh (ganjil) dan kanan (genap) untuk lengan & kaki.
+const LEFT_IDX = new Set([11, 13, 15, 23, 25, 27, 29, 31]);
+const RIGHT_IDX = new Set([12, 14, 16, 24, 26, 28, 30, 32]);
+
 
 export class SkeletonRenderer {
   constructor(canvas) {
@@ -37,7 +37,8 @@ export class SkeletonRenderer {
 
   /**
    * @param {Array|null} landmarks ternormalisasi
-   * @param {{side?:string, valid?:boolean, warn?:boolean, angle?:{value:number, at:number, from:number, to:number}, mirrored?:boolean, background?:boolean}} o
+   * @param {{side?:string, valid?:boolean, warn?:boolean, highlight?:Array<[number,number]>,
+   *   angle?:{value:number, at:number, from:number, to:number}, mirrored?:boolean, background?:boolean}} o
    */
   draw(landmarks, o = {}) {
     const { ctx, canvas } = this;
@@ -51,8 +52,12 @@ export class SkeletonRenderer {
 
     const s = Math.max(w, h) / 640;
     const P = (i) => toPx(landmarks[i], w, h);
-    const active = o.valid && o.side ? ACTIVE[o.side] : null;
+    const active = o.valid && o.highlight
+      ? new Set(o.highlight.flatMap(([a, b]) => [`${a}-${b}`, `${b}-${a}`]))
+      : null;
     const hi = o.warn ? this.colors.warn : this.colors.accent;
+    // Tampak samping: sisi jauh tertutup tubuh → posisinya tebakan, jadi diredupkan.
+    const farSet = o.valid && o.side ? (o.side === 'left' ? RIGHT_IDX : LEFT_IDX) : null;
 
     ctx.lineCap = 'round';
     for (const [a, b] of CONNECTIONS) {
@@ -60,8 +65,9 @@ export class SkeletonRenderer {
       if (va < 0.3 || vb < 0.3) continue;
       const key = `${a}-${b}`;
       const isActive = active?.has(key);
-      ctx.strokeStyle = isActive ? hi : (Math.min(va, vb) > 0.6 ? this.colors.base : this.colors.dim);
-      ctx.lineWidth = (isActive ? 6 : 3.5) * s;
+      const isFar = farSet && farSet.has(a) && farSet.has(b);
+      ctx.strokeStyle = isActive ? hi : (isFar || Math.min(va, vb) <= 0.6 ? this.colors.dim : this.colors.base);
+      ctx.lineWidth = (isActive ? 6 : isFar ? 2.5 : 3.5) * s;
       const pa = P(a), pb = P(b);
       ctx.beginPath();
       ctx.moveTo(pa.x, pa.y);
@@ -73,7 +79,8 @@ export class SkeletonRenderer {
       const v = visibilityOf(landmarks[i]);
       if (v < 0.3) continue;
       const p = P(i);
-      ctx.fillStyle = v > 0.6 ? '#fff' : 'rgba(255,255,255,0.4)';
+      const far = farSet?.has(i);
+      ctx.fillStyle = far ? 'rgba(255,255,255,0.25)' : v > 0.6 ? '#fff' : 'rgba(255,255,255,0.4)';
       ctx.beginPath();
       ctx.arc(p.x, p.y, (i === LM.NOSE ? 5 : 4.5) * s, 0, Math.PI * 2);
       ctx.fill();
