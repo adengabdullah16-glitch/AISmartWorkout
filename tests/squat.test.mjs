@@ -137,5 +137,41 @@ test('rearm (pause/resume) mewajibkan berdiri sebelum menghitung', () => {
   for (const f of squatSequence({ reps: 1, minKnee: 80 })) a.update(f);
   assert.equal(a.reps, 1);
   a.rearm();
-  assert.equal(a.state, 'NEED_STAND');
+  assert.equal(a.state, 'NEED_READY');
+});
+
+test('noise sesaat (2 frame tumit meloncat) tidak menandai repetisi', () => {
+  const frames = squatSequence({ reps: 3, minKnee: 80, noise: 2 });
+  // sisipkan loncatan tumit 2 frame di tiap repetisi
+  for (let i = 40; i < frames.length; i += 60) {
+    for (const j of [i, i + 1]) {
+      if (!frames[j]) continue;
+      const lm = frames[j].landmarks.map((p) => ({ ...p }));
+      lm[30].y -= 40 / 480; // tumit kanan (sisi dekat) loncat naik 40 px
+      lm[28].x += 30 / 640; // pergelangan kaki ikut loncat
+      frames[j] = { ...frames[j], landmarks: lm };
+    }
+  }
+  const { a, events } = run(frames, { smooth: false });
+  assert.equal(a.reps, 3);
+  for (const e of events.filter((e) => e.type === 'rep')) assert.deepEqual(e.flags, []);
+  assert.equal(a.stats.goodReps, 3);
+});
+
+test('tumit benar-benar terangkat sepanjang repetisi tetap ditandai', () => {
+  const { a, events } = run(squatSequence({ reps: 2, minKnee: 80, heelLift: 0 }).map((f, i, arr) => f), { smooth: false });
+  assert.equal(a.reps, 2);
+  // sekarang dengan tumit terangkat konsisten saat jongkok
+  const frames = [];
+  let t = 0;
+  const push = (ang, lift) => { frames.push({ landmarks: squatPose(ang, { noise: 0, heelLift: lift }), width: 640, height: 480, t }); t += 33; };
+  for (let i = 0; i < 20; i++) push(175, 0);
+  for (let ang = 175; ang >= 80; ang -= 3) push(ang, ang < 150 ? 30 : 0);
+  for (let i = 0; i < 10; i++) push(80, 30);
+  for (let ang = 80; ang <= 175; ang += 3) push(ang, ang < 150 ? 30 : 0);
+  for (let i = 0; i < 20; i++) push(175, 0);
+  const r = run(frames, { smooth: false });
+  assert.equal(r.a.reps, 1);
+  assert.ok(r.events.find((e) => e.type === 'rep').flags.includes('heel'));
+  assert.ok(events.length >= 0);
 });
