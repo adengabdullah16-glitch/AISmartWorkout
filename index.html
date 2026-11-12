@@ -90,25 +90,7 @@
     </header>
 
     <section class="card guide">
-      <div class="guide-art" aria-hidden="true">
-        <svg viewBox="0 0 320 170">
-          <line x1="10" y1="150" x2="310" y2="150" class="g-floor"/>
-          <!-- HP -->
-          <rect x="34" y="78" width="24" height="44" rx="5" class="g-phone"/>
-          <circle cx="46" cy="86" r="2.5" class="g-lens"/>
-          <path d="M40 122 l-8 28 M52 122 l8 28" class="g-stand"/>
-          <!-- garis pandang -->
-          <path d="M58 92 L250 20 M58 92 L250 152" class="g-sight"/>
-          <!-- figur samping squat -->
-          <circle cx="226" cy="54" r="10" class="g-head"/>
-          <path d="M222 66 L206 100 L232 112 L222 148 M206 100 L232 112" class="g-body"/>
-          <path d="M221 74 L246 88" class="g-body"/>
-          <path d="M222 148 L238 148" class="g-body"/>
-          <!-- jarak -->
-          <path d="M58 162 L210 162" class="g-dim"/>
-          <text x="134" y="158" class="g-txt">2–3 m</text>
-        </svg>
-      </div>
+      <div class="guide-art" id="guide-art" aria-hidden="true"></div>
       <h2 class="guide-title" id="guide-title">Posisi kamera</h2>
       <ol class="guide-steps" id="guide-steps"></ol>
       <p class="guide-note" id="guide-note"></p>
@@ -135,6 +117,10 @@
       <div class="setting-row inner">
         <label for="opt-cpu" class="setting-label">Mode kompatibilitas (CPU)<small>Aktifkan bila deteksi macet/kosong, misalnya di sebagian iPhone/iPad.</small></label>
         <input type="checkbox" id="opt-cpu" class="switch">
+      </div>
+      <div class="setting-row inner">
+        <label for="opt-full" class="setting-label">Akurasi tinggi (model full)<small>Skeleton lebih stabil, tapi lebih berat. Cocok untuk iPad/HP yang kuat.</small></label>
+        <input type="checkbox" id="opt-full" class="switch">
       </div>
       <button class="link-btn" id="btn-demo">Coba mode demo (tanpa kamera)</button>
     </details>
@@ -181,12 +167,12 @@
       </div>
 
       <div class="depth" aria-hidden="true">
-        <div class="depth-track"><div class="depth-fill" id="depth-fill"></div><div class="depth-mark"></div></div>
+        <div class="depth-track"><div class="depth-fill" id="depth-fill"></div><div class="depth-mark" id="depth-mark"></div></div>
         <span class="depth-angle" id="depth-angle">—</span>
       </div>
 
       <div class="coach" id="coach" data-tone="info" aria-live="polite">
-        <span id="coach-text">Berdiri tegak menyamping untuk memulai.</span>
+        <span id="coach-text">Bersiap…</span>
       </div>
 
       <div class="overlay-panel" id="loading" hidden>
@@ -229,7 +215,7 @@
     <section class="stats">
       <article class="card stat"><span class="stat-label">Durasi</span><strong class="stat-value" id="sum-duration">0d</strong></article>
       <article class="card stat"><span class="stat-label">Teknik baik</span><strong class="stat-value" id="sum-good">0</strong></article>
-      <article class="card stat"><span class="stat-label">Terlalu dangkal</span><strong class="stat-value" id="sum-shallow">0</strong></article>
+      <article class="card stat"><span class="stat-label">Tidak penuh</span><strong class="stat-value" id="sum-shallow">0</strong></article>
       <article class="card stat"><span class="stat-label">Target</span><strong class="stat-value" id="sum-target">0</strong></article>
     </section>
     <section class="card notes">
